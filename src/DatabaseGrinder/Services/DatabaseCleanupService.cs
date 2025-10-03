@@ -40,41 +40,47 @@ public class DatabaseCleanupService(
 	}
 
 	/// <summary>
-	/// Clean up database resources: drop read-only user and database
-	/// Note: Does NOT remove the main superuser
+	/// Cleanup database resources including dropping database and read-only user
 	/// </summary>
 	public async Task CleanupDatabaseResourcesAsync()
 	{
+		logger.LogWarning("=== DATABASE CLEANUP STARTED ===");
+		
+		var builder = new NpgsqlConnectionStringBuilder(_settings.PrimaryConnection.ConnectionString);
+		var databaseName = builder.Database;
+		var readerUsername = _settings.DatabaseManagement.ReaderUsername;
+
+		logger.LogWarning("Cleanup targets - Database: {DatabaseName}, Reader: {ReaderUsername}", 
+			databaseName, readerUsername);
+
+		// Build connection string to 'postgres' database for cleanup operations
+		builder.Database = "postgres"; // Connect to postgres database to drop target database
+		var adminConnectionString = builder.ToString();
+
+		logger.LogInformation("Connecting to postgres database for cleanup operations...");
+
+		await using var connection = new NpgsqlConnection(adminConnectionString);
 		try
 		{
-			logger.LogInformation("Starting database cleanup...");
-
-			// Extract database name from connection string
-			var builder = new NpgsqlConnectionStringBuilder(_settings.PrimaryConnection.ConnectionString);
-			var databaseName = builder.Database;
-			var readerUsername = _settings.DatabaseManagement.ReaderUsername;
-
-			// Create connection to 'postgres' database (not the target database)
-			builder.Database = "postgres";
-			var masterConnectionString = builder.ToString();
-
-			using var connection = new NpgsqlConnection(masterConnectionString);
 			await connection.OpenAsync();
+			logger.LogInformation("Connected to postgres database successfully");
 
 			// Step 1: Terminate all connections to the target database
-			logger.LogInformation("Terminating connections to database: {DatabaseName}", databaseName);
+			logger.LogWarning("Step 1: Terminating connections to database: {DatabaseName}", databaseName);
 			var terminateConnectionsQuery = $@"
                 SELECT pg_terminate_backend(pid)
                 FROM pg_stat_activity
-                WHERE datname = '{databaseName}' AND pid <> pg_backend_pid()";
+                WHERE datname = '{databaseName}' AND pid <> pg_backend_pid()" ;
 
 			using (var terminateCommand = new NpgsqlCommand(terminateConnectionsQuery, connection))
 			{
-				await terminateCommand.ExecuteNonQueryAsync();
+				var terminatedCount = await terminateCommand.ExecuteNonQueryAsync();
+				logger.LogInformation("Terminated {Count} connections to database {DatabaseName}", 
+					terminatedCount, databaseName);
 			}
 
 			// Step 2: Drop the read-only user (if exists)
-			logger.LogInformation("Dropping read-only user: {Username}", readerUsername);
+			logger.LogWarning("Step 2: Dropping read-only user: {Username}", readerUsername);
 			var dropUserQuery = $@"
                 DO $$
                 BEGIN
@@ -90,23 +96,25 @@ public class DatabaseCleanupService(
 			using (var dropUserCommand = new NpgsqlCommand(dropUserQuery, connection))
 			{
 				await dropUserCommand.ExecuteNonQueryAsync();
+				logger.LogWarning("Read-only user drop command executed successfully");
 			}
 
 			// Step 3: Drop the database (if exists)
-			logger.LogInformation("Dropping database: {DatabaseName}", databaseName);
+			logger.LogError("Step 3: DROPPING DATABASE: {DatabaseName} - THIS IS PERMANENT!", databaseName);
 			var dropDatabaseQuery = $@"
                 DROP DATABASE IF EXISTS ""{databaseName}""";
 
 			using (var dropDbCommand = new NpgsqlCommand(dropDatabaseQuery, connection))
 			{
 				await dropDbCommand.ExecuteNonQueryAsync();
+				logger.LogError("DATABASE DROPPED SUCCESSFULLY: {DatabaseName}", databaseName);
 			}
 
-			logger.LogInformation("Database cleanup completed successfully");
+			logger.LogWarning("=== DATABASE CLEANUP COMPLETED SUCCESSFULLY ===");
 		}
 		catch (Exception ex)
 		{
-			logger.LogError(ex, "Failed to cleanup database resources");
+			logger.LogError(ex, "=== DATABASE CLEANUP FAILED ===");
 			throw;
 		}
 	}

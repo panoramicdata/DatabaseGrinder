@@ -311,13 +311,13 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				// This may not work in all terminal types
 				var currentWidth = Console.WindowWidth;
 				var currentHeight = Console.WindowHeight;
-				
+
 				if (currentWidth < MinWidth || currentHeight < MinHeight)
 				{
 					try
 					{
 						Console.SetWindowSize(
-							Math.Max(currentWidth, MinWidth), 
+							Math.Max(currentWidth, MinWidth),
 							Math.Max(currentHeight, MinHeight)
 						);
 					}
@@ -381,7 +381,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 					{
 						Console.ForegroundColor = ConsoleColor.Gray;
 					}
-					
+
 					Console.Write(message);
 				}
 			}
@@ -412,30 +412,60 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 
 			// Create branding text with logo
 			var brandText = GetBrandingText();
-			
+
 			// Draw branding with orange background for the logo part only
 			var brandingX = 0;
-			var logoStart = _supportsUnicode ? "DatabaseGrinder  ".Length : "DatabaseGrinder  ".Length;
-			var logoEnd = GetLogoLength();
-			
+
 			for (int i = 0; i < brandText.Length && brandingX < _currentWidth; i++)
 			{
 				var ch = brandText[i];
 				var fg = ConsoleColor.White;
 				var bg = ConsoleColor.Black; // Default background
 
-				// Apply orange background to the logo portion only (panoramic data part)
-				if (i >= logoStart && i < logoEnd)
+				// Apply orange background only to the Unicode character and "panoramic data" but NOT the space between them
+				if (_supportsUnicode)
 				{
-					bg = ConsoleColor.DarkYellow; // Orange-ish background
+					// "ߝ panoramic data" - orange background on Unicode char and "panoramic data", transparent space
+					if (i == 0) // Unicode character ߝ
+					{
+						bg = ConsoleColor.DarkYellow;
+					}
+					else if (i == 1) // Space after Unicode character - keep transparent/black
+					{
+						bg = ConsoleColor.Black;
+					}
+					else if (i >= 2 && i < "ߝ panoramic data".Length) // "panoramic data"
+					{
+						bg = ConsoleColor.DarkYellow;
+					}
+					else
+					{
+						fg = ConsoleColor.Gray; // Rest of text in gray
+					}
 				}
 				else
 				{
-					fg = ConsoleColor.Gray; // Rest of text in gray
+					// Non-Unicode fallback - orange background on "panoramic data" only
+					if (i < "panoramic data".Length)
+					{
+						bg = ConsoleColor.DarkYellow;
+					}
+					else
+					{
+						fg = ConsoleColor.Gray;
+					}
 				}
 
 				_currentBuffer[brandingX, 0] = new ConsoleCell(ch, fg, bg);
 				brandingX++;
+
+				// Add extra background space immediately after Unicode character if it overflows visually
+				if (_supportsUnicode && i == 0 && brandingX < _currentWidth)
+				{
+					// The Unicode character might take more visual space, so add an extra orange background cell right after it
+					_currentBuffer[brandingX, 0] = new ConsoleCell(' ', ConsoleColor.White, ConsoleColor.DarkYellow);
+					brandingX++;
+				}
 			}
 
 			// === BOTTOM FOOTER ROW ===
@@ -448,7 +478,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			}
 
 			// Footer shortcuts - centered
-			var footerShortcuts = "q=quit Ctrl+Q=cleanup r=refresh h=help ESC=exit";
+			var footerShortcuts = "Q = Quit   R = Refresh   ESC/Ctrl+C = exit   Ctrl+Q = Delete r/o user, delete database and exit";
 			var footerShortcutsStartX = (_currentWidth - footerShortcuts.Length) / 2;
 			if (footerShortcutsStartX >= 0)
 			{
@@ -466,6 +496,15 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 					_currentBuffer[sepX, ContentStartY] = new ConsoleCell(HorizontalLineChar, ConsoleColor.DarkGray, ConsoleColor.Black);
 				}
 			}
+
+			// Draw a separator line above footer if there's space
+			if (_currentHeight > 3)
+			{
+				for (int sepX = 0; sepX < _currentWidth; sepX++)
+				{
+					_currentBuffer[sepX, FooterStartY - 1] = new ConsoleCell(HorizontalLineChar, ConsoleColor.DarkGray, ConsoleColor.Black);
+				}
+			}
 		}
 	}
 
@@ -475,22 +514,22 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	private string GetBrandingText()
 	{
 		const string nkoChar = "ߝ"; // Unicode Nko letter FA
-		
+
 		if (_supportsUnicode)
 		{
-			// Try Unicode logo first - with transparent spacer between Unicode char and "panoramic"
+			// Try Unicode logo first - with proper spacing: [logo] [space] [panoramic data] [DatabaseGrinder] [version] [URL]
 			try
 			{
-				return $"DatabaseGrinder  {nkoChar} panoramic data  https://panoramicdata.com/";
+				return $"{nkoChar} panoramic data  DatabaseGrinder v1.1.0  https://panoramicdata.com/";
 			}
 			catch
 			{
 				// Fallback if Unicode char fails
 			}
 		}
-		
+
 		// Fallback without logo character
-		return "DatabaseGrinder  panoramic data  https://panoramicdata.com/";
+		return "panoramic data  DatabaseGrinder v1.1.0  https://panoramicdata.com/";
 	}
 
 	/// <summary>
@@ -500,13 +539,13 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	{
 		if (_supportsUnicode)
 		{
-			// "DatabaseGrinder  ߝ panoramic data"
-			return "DatabaseGrinder  ߝ panoramic data".Length;
+			// "ߝ panoramic data" - includes space between Unicode char and text
+			return "ߝ panoramic data".Length;
 		}
 		else
 		{
-			// "DatabaseGrinder  panoramic data"
-			return "DatabaseGrinder  panoramic data".Length;
+			// "panoramic data"
+			return "panoramic data".Length;
 		}
 	}
 
@@ -650,9 +689,16 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				WriteCharAt(separatorX, topY, GetTeeDownChar(), ConsoleColor.DarkGray);
 
 				// Draw vertical line in content area
-				for (int y = ContentStartY + 1; y < FooterStartY; y++)
+				for (int y = ContentStartY + 1; y < FooterStartY - 1; y++)
 				{
 					WriteCharAt(separatorX, y, VerticalLineChar, ConsoleColor.DarkGray);
+				}
+
+				// Draw the junction at the bottom where vertical separator meets footer horizontal line
+				var bottomY = FooterStartY - 1;
+				if (bottomY > ContentStartY)
+				{
+					WriteCharAt(separatorX, bottomY, GetTeeUpChar(), ConsoleColor.DarkGray);
 				}
 			}
 		}
@@ -663,9 +709,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// </summary>
 	public char GetTeeDownChar()
 	{
-		return _supportsUnicode ? LineChars.Unicode.TeeDown : 
-		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeDown : 
-		       LineChars.Ascii.TeeDown;
+		return _supportsUnicode ? LineChars.Unicode.TeeDown :
+			   _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeDown :
+			   LineChars.Ascii.TeeDown;
 	}
 
 	/// <summary>
@@ -673,9 +719,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// </summary>
 	public char GetTeeUpChar()
 	{
-		return _supportsUnicode ? LineChars.Unicode.TeeUp : 
-		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeUp : 
-		       LineChars.Ascii.TeeUp;
+		return _supportsUnicode ? LineChars.Unicode.TeeUp :
+			   _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeUp :
+			   LineChars.Ascii.TeeUp;
 	}
 
 	/// <summary>
@@ -683,9 +729,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// </summary>
 	public char GetTeeRightChar()
 	{
-		return _supportsUnicode ? LineChars.Unicode.TeeRight : 
-		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeRight : 
-		       LineChars.Ascii.TeeRight;
+		return _supportsUnicode ? LineChars.Unicode.TeeRight :
+			   _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeRight :
+			   LineChars.Ascii.TeeRight;
 	}
 
 	/// <summary>
@@ -693,9 +739,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// </summary>
 	public char GetTeeLeftChar()
 	{
-		return _supportsUnicode ? LineChars.Unicode.TeeLeft : 
-		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeLeft : 
-		       LineChars.Ascii.TeeLeft;
+		return _supportsUnicode ? LineChars.Unicode.TeeLeft :
+			   _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeLeft :
+			   LineChars.Ascii.TeeLeft;
 	}
 
 	/// <summary>

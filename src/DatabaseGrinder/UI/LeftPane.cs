@@ -107,10 +107,10 @@ public class LeftPane
 
 			// Draw separator line using proper line drawing character with T-piece
 			var separatorY = startY + 1;
-			var separator = new string(_consoleManager.HorizontalLineChar, paneWidth - 1);
+			var separator = new string(_consoleManager.HorizontalLineChar, paneWidth);
 			_consoleManager.WriteAt(0, separatorY, separator, ConsoleColor.DarkGray);
 			// Add T-piece where this horizontal line meets the vertical separator
-			_consoleManager.WriteCharAt(paneWidth - 1, separatorY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
+			_consoleManager.WriteCharAt(paneWidth, separatorY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
 
 			// Calculate available space for log entries (accounting for title and local separator)
 			var logStartY = separatorY + 1;
@@ -138,10 +138,10 @@ public class LeftPane
 			var statusStartY = _consoleManager.FooterStartY - statusAreaHeight;
 
 			// Status separator line with T-piece
-			var statusSeparator = new string(_consoleManager.HorizontalLineChar, paneWidth - 1);
+			var statusSeparator = new string(_consoleManager.HorizontalLineChar, paneWidth);
 			_consoleManager.WriteAt(0, statusStartY, statusSeparator, ConsoleColor.DarkGray);
 			// Add T-piece where this horizontal line meets the vertical separator
-			_consoleManager.WriteCharAt(paneWidth - 1, statusStartY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
+			_consoleManager.WriteCharAt(paneWidth, statusStartY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
 
 			// Connection status
 			var statusText = TruncateText(_connectionStatus, paneWidth);

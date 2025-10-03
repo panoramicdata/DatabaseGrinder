@@ -218,6 +218,10 @@ public class UIManager(
 
 	private void HandleKeyPress(ConsoleKeyInfo key)
 	{
+		// Add debug logging for key presses
+		logger.LogDebug("Key pressed: '{KeyChar}' (0x{KeyCode:X2}), Key: {Key}, Modifiers: {Modifiers}", 
+			key.KeyChar, (int)key.KeyChar, key.Key, key.Modifiers);
+
 		switch (key.KeyChar)
 		{
 			case 'q':
@@ -227,7 +231,8 @@ public class UIManager(
 				{
 					// Ctrl+Q - Database cleanup and quit
 					logger.LogWarning("User pressed Ctrl+Q - initiating database cleanup");
-					leftPane.AddLogEntry("Ctrl+Q - Shutting down and cleaning up database...", LogLevel.Warning);
+					leftPane.AddLogEntry("Ctrl+Q detected - Shutting down and cleaning up database...", LogLevel.Warning);
+					leftPane.AddLogEntry("This will DELETE the database and read-only user!", LogLevel.Error);
 
 					// Stop the application and trigger cleanup
 					_ = Task.Run(async () =>
@@ -260,14 +265,26 @@ public class UIManager(
 				consoleManager.ForceFullRedraw();
 				break;
 
-			case 'h':
-			case 'H':
-				// Show help in log
-				leftPane.AddLogEntry("=== KEYBOARD SHORTCUTS ===", LogLevel.Information);
-				leftPane.AddLogEntry("q = quit application", LogLevel.Information);
-				leftPane.AddLogEntry("Ctrl+Q = cleanup database and quit", LogLevel.Information);
-				leftPane.AddLogEntry("r = manual refresh screen", LogLevel.Information);
-				leftPane.AddLogEntry("ESC = quick exit", LogLevel.Information);
+			// Add explicit handling for Ctrl+Q when it comes as a control character
+			case '\u0011': // Ctrl+Q (ASCII 17)
+				logger.LogWarning("Ctrl+Q detected as control character - initiating database cleanup");
+				leftPane.AddLogEntry("Ctrl+Q (control char) - Shutting down and cleaning up database...", LogLevel.Warning);
+				leftPane.AddLogEntry("This will DELETE the database and read-only user!", LogLevel.Error);
+
+				// Stop the application and trigger cleanup
+				_ = Task.Run(async () =>
+				{
+					await Task.Delay(1000); // Give UI time to display message
+					try
+					{
+						await Program.HandleCleanupAndQuitAsync();
+					}
+					catch (Exception ex)
+					{
+						logger.LogError(ex, "Error during cleanup");
+						Environment.Exit(1);
+					}
+				});
 				break;
 
 			default:
@@ -278,9 +295,34 @@ public class UIManager(
 						hostLifetime.StopApplication();
 						break;
 
-					// Remove non-working function keys
+					// Handle Ctrl+Q through ConsoleKey detection as backup
+					case ConsoleKey.Q when (key.Modifiers & ConsoleModifiers.Control) == ConsoleModifiers.Control:
+						logger.LogWarning("Ctrl+Q detected via ConsoleKey - initiating database cleanup");
+						leftPane.AddLogEntry("Ctrl+Q (via key) - Shutting down and cleaning up database...", LogLevel.Warning);
+						leftPane.AddLogEntry("This will DELETE the database and read-only user!", LogLevel.Error);
+
+						// Stop the application and trigger cleanup
+						_ = Task.Run(async () =>
+						{
+							await Task.Delay(1000); // Give UI time to display message
+							try
+							{
+								await Program.HandleCleanupAndQuitAsync();
+							}
+							catch (Exception ex)
+							{
+								logger.LogError(ex, "Error during cleanup");
+								Environment.Exit(1);
+							}
+						});
+						break;
+
 					default:
-						// Ignore other keys
+						// Log unhandled keys for debugging
+						if (key.KeyChar != '\0')
+						{
+							leftPane.AddLogEntry($"Unhandled key: '{key.KeyChar}' ({key.Key}) Modifiers: {key.Modifiers}", LogLevel.Debug);
+						}
 						break;
 				}
 

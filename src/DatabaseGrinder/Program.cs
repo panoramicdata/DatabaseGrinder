@@ -146,6 +146,7 @@ internal class Program
 			using var scope = _serviceProvider.CreateScope();
 			var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 			var cleanupService = scope.ServiceProvider.GetRequiredService<DatabaseCleanupService>();
+			var hostLifetime = scope.ServiceProvider.GetRequiredService<IHostApplicationLifetime>();
 
 			// Log shutdown initiation
 			logger.LogWarning("Ctrl+Q pressed - Initiating shutdown with database cleanup");
@@ -161,6 +162,20 @@ internal class Program
 			Console.ResetColor();
 
 			var cleanupInfo = cleanupService.GetCleanupInfo();
+			
+			Console.WriteLine("Stopping background services...");
+			Console.ForegroundColor = ConsoleColor.Cyan;
+			Console.WriteLine("  • Stopping ReplicationMonitor service");
+			Console.WriteLine("  • Stopping DatabaseWriter service");
+			Console.ResetColor();
+
+			// Stop background services first to prevent connection errors
+			logger.LogWarning("Stopping background services before database cleanup");
+			hostLifetime.StopApplication();
+			
+			// Give services time to shut down gracefully
+			Console.WriteLine("Waiting for services to shut down...");
+			await Task.Delay(2000);
 			
 			Console.WriteLine("Cleaning up database resources:");
 			Console.ForegroundColor = ConsoleColor.Red;
