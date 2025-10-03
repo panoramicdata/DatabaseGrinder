@@ -10,8 +10,8 @@ public class LeftPane
 {
 	private readonly ConsoleManager _consoleManager;
 	private readonly ILogger<LeftPane> _logger;
-	private readonly List<string> _logLines = new();
-	private readonly object _lockObject = new object();
+	private readonly List<string> _logLines = [];
+	private readonly Lock _lockObject = new();
 	private int _maxLines;
 
 	/// <summary>
@@ -105,10 +105,12 @@ public class LeftPane
 				_consoleManager.WriteAt(0, startY, truncatedHeader, ConsoleColor.White, ConsoleColor.Blue);
 			}
 
-			// Draw separator line using proper line drawing character
+			// Draw separator line using proper line drawing character with T-piece
 			var separatorY = startY + 1;
-			var separator = new string(_consoleManager.HorizontalLineChar, paneWidth);
+			var separator = new string(_consoleManager.HorizontalLineChar, paneWidth - 1);
 			_consoleManager.WriteAt(0, separatorY, separator, ConsoleColor.DarkGray);
+			// Add T-piece where this horizontal line meets the vertical separator
+			_consoleManager.WriteCharAt(paneWidth - 1, separatorY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
 
 			// Calculate available space for log entries (accounting for title and local separator)
 			var logStartY = separatorY + 1;
@@ -135,9 +137,11 @@ public class LeftPane
 			// Draw status area at the bottom of the content area (above global footer)
 			var statusStartY = _consoleManager.FooterStartY - statusAreaHeight;
 
-			// Status separator line
-			var statusSeparator = new string(_consoleManager.HorizontalLineChar, paneWidth);
+			// Status separator line with T-piece
+			var statusSeparator = new string(_consoleManager.HorizontalLineChar, paneWidth - 1);
 			_consoleManager.WriteAt(0, statusStartY, statusSeparator, ConsoleColor.DarkGray);
+			// Add T-piece where this horizontal line meets the vertical separator
+			_consoleManager.WriteCharAt(paneWidth - 1, statusStartY, _consoleManager.GetTeeLeftChar(), ConsoleColor.DarkGray);
 
 			// Connection status
 			var statusText = TruncateText(_connectionStatus, paneWidth);
@@ -183,7 +187,7 @@ public class LeftPane
 		_maxLines = Math.Max(displayLines * 5, 50); // Keep 5x display capacity or minimum 50 lines
 	}
 
-	private ConsoleColor GetLogColor(string logLine)
+	private static ConsoleColor GetLogColor(string logLine)
 	{
 		if (logLine.Contains("ERROR") || logLine.Contains("Failed") || logLine.Contains("FATAL"))
 			return ConsoleColor.Red;

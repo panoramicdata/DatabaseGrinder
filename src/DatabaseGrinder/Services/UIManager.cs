@@ -9,39 +9,22 @@ namespace DatabaseGrinder.Services;
 /// <summary>
 /// Background service that handles UI refresh and user input
 /// </summary>
-public class UIManager : BackgroundService
+public class UIManager(
+	ILogger<UIManager> logger,
+	IOptions<DatabaseGrinderSettings> settings,
+	ConsoleManager consoleManager,
+	LeftPane leftPane,
+	RightPane rightPane,
+	IServiceProvider serviceProvider,
+	IHostApplicationLifetime hostLifetime) : BackgroundService
 {
-	private readonly ILogger<UIManager> _logger;
-	private readonly DatabaseGrinderSettings _settings;
-	private readonly ConsoleManager _consoleManager;
-	private readonly LeftPane _leftPane;
-	private readonly RightPane _rightPane;
-	private readonly IServiceProvider _serviceProvider;
-	private readonly IHostApplicationLifetime _hostLifetime;
+	private readonly DatabaseGrinderSettings _settings = settings.Value;
 	private int _renderCount = 0;
 	private DateTime _lastPerformanceLog = DateTime.Now;
 
-	public UIManager(
-		ILogger<UIManager> logger,
-		IOptions<DatabaseGrinderSettings> settings,
-		ConsoleManager consoleManager,
-		LeftPane leftPane,
-		RightPane rightPane,
-		IServiceProvider serviceProvider,
-		IHostApplicationLifetime hostLifetime)
-	{
-		_logger = logger;
-		_settings = settings.Value;
-		_consoleManager = consoleManager;
-		_leftPane = leftPane;
-		_rightPane = rightPane;
-		_serviceProvider = serviceProvider;
-		_hostLifetime = hostLifetime;
-	}
-
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
-		_logger.LogInformation("UI Manager started - refreshing every {IntervalMs}ms with differential rendering",
+		logger.LogInformation("UI Manager started - refreshing every {IntervalMs}ms with differential rendering",
 			_settings.Settings.UIRefreshIntervalMs);
 
 		var refreshInterval = TimeSpan.FromMilliseconds(_settings.Settings.UIRefreshIntervalMs);
@@ -52,15 +35,15 @@ public class UIManager : BackgroundService
 			RenderUI();
 
 			// Check for window too small on startup
-			if (_consoleManager.Width < _consoleManager.MinWidth || _consoleManager.Height < _consoleManager.MinHeight)
+			if (consoleManager.Width < consoleManager.MinWidth || consoleManager.Height < consoleManager.MinHeight)
 			{
 				await HandleWindowTooSmallAsync(stoppingToken);
 				if (stoppingToken.IsCancellationRequested) return;
 			}
 
 			// Add startup messages only after console is properly sized
-			_leftPane.AddLogEntry($"UI refresh rate: {_settings.Settings.UIRefreshIntervalMs}ms ({1000.0 / _settings.Settings.UIRefreshIntervalMs:F1} FPS)", LogLevel.Information);
-			_leftPane.AddLogEntry($"Terminal capabilities: {_consoleManager.GetPlatformInfo()}", LogLevel.Information);
+			leftPane.AddLogEntry($"UI refresh rate: {_settings.Settings.UIRefreshIntervalMs}ms ({1000.0 / _settings.Settings.UIRefreshIntervalMs:F1} FPS)", LogLevel.Information);
+			leftPane.AddLogEntry($"Terminal capabilities: {consoleManager.GetPlatformInfo()}", LogLevel.Information);
 
 			// Start UI refresh loop
 			while (!stoppingToken.IsCancellationRequested)
@@ -70,26 +53,26 @@ public class UIManager : BackgroundService
 					var renderStart = DateTime.Now;
 
 					// Check for console size changes
-					var sizeChanged = _consoleManager.CheckForSizeChange();
+					var sizeChanged = consoleManager.CheckForSizeChange();
 					if (sizeChanged)
 					{
-						_logger.LogInformation("Console size changed to {Width}x{Height}",
-							_consoleManager.Width, _consoleManager.Height);
+						logger.LogInformation("Console size changed to {Width}x{Height}",
+							consoleManager.Width, consoleManager.Height);
 
 						// If window became too small, handle it
-						if (_consoleManager.Width < _consoleManager.MinWidth || _consoleManager.Height < _consoleManager.MinHeight)
+						if (consoleManager.Width < consoleManager.MinWidth || consoleManager.Height < consoleManager.MinHeight)
 						{
 							await HandleWindowTooSmallAsync(stoppingToken);
 							if (stoppingToken.IsCancellationRequested) return;
 							continue;
 						}
 
-						_leftPane.AddLogEntry($"Console resized to {_consoleManager.Width}x{_consoleManager.Height}", LogLevel.Information);
-						_consoleManager.ForceFullRedraw();
+						leftPane.AddLogEntry($"Console resized to {consoleManager.Width}x{consoleManager.Height}", LogLevel.Information);
+						consoleManager.ForceFullRedraw();
 					}
 
 					// Update left pane with writer status
-					_leftPane.UpdateConnectionStatus("Database Writer Active", true);
+					leftPane.UpdateConnectionStatus("Database Writer Active", true);
 
 					// Render the UI using differential updates
 					RenderUI();
@@ -100,9 +83,9 @@ public class UIManager : BackgroundService
 					// Log performance stats every 30 seconds for faster refresh rates
 					if (DateTime.Now - _lastPerformanceLog > TimeSpan.FromSeconds(30))
 					{
-						var perfStats = _consoleManager.GetPerformanceStats();
+						var perfStats = consoleManager.GetPerformanceStats();
 						var avgRenderTime = renderTime.TotalMilliseconds;
-						_leftPane.AddLogEntry($"UI performance: {perfStats}, avg render: {avgRenderTime:F1}ms", LogLevel.Debug);
+						leftPane.AddLogEntry($"UI performance: {perfStats}, avg render: {avgRenderTime:F1}ms", LogLevel.Debug);
 						_lastPerformanceLog = DateTime.Now;
 					}
 
@@ -134,9 +117,9 @@ public class UIManager : BackgroundService
 						// Log if rendering is taking too long (only occasionally to avoid spam)
 						if (_renderCount % 100 == 0)
 						{
-							_logger.LogWarning("Render took {ElapsedMs}ms, target is {TargetMs}ms",
+							logger.LogWarning("Render took {ElapsedMs}ms, target is {TargetMs}ms",
 								elapsed.TotalMilliseconds, refreshInterval.TotalMilliseconds);
-							_leftPane.AddLogEntry($"Slow render: {elapsed.TotalMilliseconds:F1}ms (target: {refreshInterval.TotalMilliseconds}ms)", LogLevel.Warning);
+							leftPane.AddLogEntry($"Slow render: {elapsed.TotalMilliseconds:F1}ms (target: {refreshInterval.TotalMilliseconds}ms)", LogLevel.Warning);
 						}
 					}
 				}
@@ -147,8 +130,8 @@ public class UIManager : BackgroundService
 				}
 				catch (Exception ex)
 				{
-					_logger.LogError(ex, "Error in UI refresh loop");
-					_leftPane.AddLogEntry($"UI error: {ex.Message}", LogLevel.Error);
+					logger.LogError(ex, "Error in UI refresh loop");
+					leftPane.AddLogEntry($"UI error: {ex.Message}", LogLevel.Error);
 
 					try
 					{
@@ -164,17 +147,17 @@ public class UIManager : BackgroundService
 		catch (OperationCanceledException)
 		{
 			// Expected during shutdown
-			_logger.LogInformation("UI Manager cancellation requested");
+			logger.LogInformation("UI Manager cancellation requested");
 		}
 		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Unexpected error in UI Manager");
-			_leftPane.AddLogEntry($"FATAL: UI Manager error - {ex.Message}", LogLevel.Error);
+			logger.LogError(ex, "Unexpected error in UI Manager");
+			leftPane.AddLogEntry($"FATAL: UI Manager error - {ex.Message}", LogLevel.Error);
 		}
 		finally
 		{
-			_logger.LogInformation("UI Manager stopped gracefully after {RenderCount} renders", _renderCount);
-			_leftPane.AddLogEntry($"UI Manager stopped after {_renderCount} renders", LogLevel.Information);
+			logger.LogInformation("UI Manager stopped gracefully after {RenderCount} renders", _renderCount);
+			leftPane.AddLogEntry($"UI Manager stopped after {_renderCount} renders", LogLevel.Information);
 		}
 	}
 
@@ -183,22 +166,39 @@ public class UIManager : BackgroundService
 	/// </summary>
 	private async Task HandleWindowTooSmallAsync(CancellationToken stoppingToken)
 	{
-		_logger.LogWarning("Console window too small: {Width}x{Height}, minimum: {MinWidth}x{MinHeight}",
-			_consoleManager.Width, _consoleManager.Height, _consoleManager.MinWidth, _consoleManager.MinHeight);
+		logger.LogWarning("Console window too small: {Width}x{Height}, minimum: {MinWidth}x{MinHeight}",
+			consoleManager.Width, consoleManager.Height, consoleManager.MinWidth, consoleManager.MinHeight);
 
 		while (!stoppingToken.IsCancellationRequested)
 		{
 			// Show the "window too small" message
-			_consoleManager.Render();
+			consoleManager.Render();
 
 			// Check for keyboard input (allow exit even when window is too small)
 			if (Console.KeyAvailable)
 			{
 				var key = Console.ReadKey(true);
+
+				// Handle exit keys
 				if (key.Key == ConsoleKey.Escape || key.KeyChar == 'q' || key.KeyChar == 'Q')
 				{
-					_hostLifetime.StopApplication();
-					return;
+					if (key.KeyChar == 'Q' && (key.Modifiers & ConsoleModifiers.Control) == ConsoleModifiers.Control)
+					{
+						// Ctrl+Q - cleanup and quit
+						logger.LogWarning("User pressed Ctrl+Q during window too small - initiating cleanup");
+						_ = Task.Run(async () =>
+						{
+							await Task.Delay(500);
+							await Program.HandleCleanupAndQuitAsync();
+						}, stoppingToken);
+						return;
+					}
+					else
+					{
+						// Regular quit
+						hostLifetime.StopApplication();
+						return;
+					}
 				}
 			}
 
@@ -206,11 +206,11 @@ public class UIManager : BackgroundService
 			await Task.Delay(500, stoppingToken);
 
 			// Check if window has been resized to acceptable size
-			_consoleManager.CheckForSizeChange();
-			if (_consoleManager.Width >= _consoleManager.MinWidth && _consoleManager.Height >= _consoleManager.MinHeight)
+			consoleManager.CheckForSizeChange();
+			if (consoleManager.Width >= consoleManager.MinWidth && consoleManager.Height >= consoleManager.MinHeight)
 			{
-				_logger.LogInformation("Console window resized to acceptable size: {Width}x{Height}",
-					_consoleManager.Width, _consoleManager.Height);
+				logger.LogInformation("Console window resized to acceptable size: {Width}x{Height}",
+					consoleManager.Width, consoleManager.Height);
 				break;
 			}
 		}
@@ -226,65 +226,64 @@ public class UIManager : BackgroundService
 				if ((key.Modifiers & ConsoleModifiers.Control) == ConsoleModifiers.Control)
 				{
 					// Ctrl+Q - Database cleanup and quit
-					_logger.LogWarning("User pressed Ctrl+Q - initiating database cleanup");
-					_leftPane.AddLogEntry("Ctrl+Q - Initiating database cleanup mode...");
+					logger.LogWarning("User pressed Ctrl+Q - initiating database cleanup");
+					leftPane.AddLogEntry("Ctrl+Q - Shutting down and cleaning up database...", LogLevel.Warning);
 
 					// Stop the application and trigger cleanup
 					_ = Task.Run(async () =>
 					{
-						await Task.Delay(500); // Give UI time to display message
-						await Program.HandleCleanupAndQuitAsync();
+						await Task.Delay(1000); // Give UI time to display message
+						try
+						{
+							await Program.HandleCleanupAndQuitAsync();
+						}
+						catch (Exception ex)
+						{
+							logger.LogError(ex, "Error during cleanup");
+							Environment.Exit(1);
+						}
 					});
 				}
 				else
 				{
 					// Regular q - Normal quit
-					_logger.LogInformation("User requested application shutdown");
-					_leftPane.AddLogEntry("Shutdown requested by user (q)");
-					_hostLifetime.StopApplication();
+					logger.LogInformation("User requested application shutdown");
+					leftPane.AddLogEntry("Shutdown requested by user (q)", LogLevel.Warning);
+					hostLifetime.StopApplication();
 				}
 
 				break;
 
 			case 'r':
 			case 'R':
-				_leftPane.AddLogEntry("Manual refresh triggered (r)");
-				_consoleManager.ForceFullRedraw();
+				leftPane.AddLogEntry("Manual refresh triggered (r)", LogLevel.Information);
+				consoleManager.ForceFullRedraw();
 				break;
 
 			case 'h':
 			case 'H':
 				// Show help in log
-				_leftPane.AddLogEntry("Keys: q=quit, Ctrl+Q=cleanup&quit, r=refresh, h=help, ESC=exit");
+				leftPane.AddLogEntry("=== KEYBOARD SHORTCUTS ===", LogLevel.Information);
+				leftPane.AddLogEntry("q = quit application", LogLevel.Information);
+				leftPane.AddLogEntry("Ctrl+Q = cleanup database and quit", LogLevel.Information);
+				leftPane.AddLogEntry("r = manual refresh screen", LogLevel.Information);
+				leftPane.AddLogEntry("ESC = quick exit", LogLevel.Information);
 				break;
 
 			default:
 				switch (key.Key)
 				{
-					case ConsoleKey.F5:
-						_leftPane.AddLogEntry("F5 - Manual refresh triggered");
-						_consoleManager.ForceFullRedraw();
-						break;
-
-					case ConsoleKey.F12:
-						// Debug: Force full redraw and show performance stats
-						_consoleManager.ForceFullRedraw();
-						var stats = _consoleManager.GetPerformanceStats();
-						_leftPane.AddLogEntry($"F12 - Performance: {stats}");
-						_leftPane.AddLogEntry($"Layout: {_consoleManager.GetLayoutInfo()}");
-						break;
-
-					case ConsoleKey.F1:
-						// Show help
-						_leftPane.AddLogEntry("=== HELP ===");
-						_leftPane.AddLogEntry("q/ESC=quit | Ctrl+Q=cleanup&quit | r/F5=refresh | F12=stats | h/F1=help");
-						break;
-
 					case ConsoleKey.Escape:
-						_leftPane.AddLogEntry("ESC - Shutdown requested");
-						_hostLifetime.StopApplication();
+						leftPane.AddLogEntry("ESC - Shutdown requested", LogLevel.Warning);
+						hostLifetime.StopApplication();
+						break;
+
+					// Remove non-working function keys
+					default:
+						// Ignore other keys
 						break;
 				}
+
 				break;
 		}
 	}
@@ -294,24 +293,24 @@ public class UIManager : BackgroundService
 		try
 		{
 			// Clear the buffer
-			_consoleManager.Clear();
+			consoleManager.Clear();
 
 			// Draw vertical separator (ConsoleManager will handle branding area automatically)
-			_consoleManager.DrawVerticalSeparator();
+			consoleManager.DrawVerticalSeparator();
 
 			// Render left pane to buffer
-			_leftPane.Render();
+			leftPane.Render();
 
 			// Render right pane to buffer
-			_rightPane.Render();
+			rightPane.Render();
 
 			// Apply all changes to the actual console (differential update)
 			// This will also render the branding area
-			_consoleManager.Render();
+			consoleManager.Render();
 		}
 		catch (Exception ex)
 		{
-			_logger.LogError(ex, "Failed to render UI");
+			logger.LogError(ex, "Failed to render UI");
 		}
 	}
 }

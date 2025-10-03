@@ -50,7 +50,6 @@ public class RightPane(ConsoleManager consoleManager)
 		lock (_lockObject)
 		{
 			var paneWidth = consoleManager.RightPaneWidth;
-			var contentHeight = consoleManager.ContentHeight;
 			var paneStartX = consoleManager.RightPaneStartX;
 			var startY = consoleManager.ContentStartY + 1; // +1 to skip separator line
 
@@ -71,10 +70,12 @@ public class RightPane(ConsoleManager consoleManager)
 			var summaryX = paneStartX + (paneWidth - statusSummary.Text.Length) / 2;
 			consoleManager.WriteAt(summaryX, startY + 1, statusSummary.Text, statusSummary.Color);
 
-			// Draw separator line using proper line drawing character
+			// Draw separator line using proper line drawing character with T-piece
 			var separatorY = startY + 2;
 			var separator = new string(consoleManager.HorizontalLineChar, paneWidth);
 			consoleManager.WriteAt(paneStartX, separatorY, separator, ConsoleColor.DarkGray);
+			// Add T-piece where this horizontal line meets the vertical separator  
+			consoleManager.WriteCharAt(paneStartX - 1, separatorY, consoleManager.GetTeeRightChar(), ConsoleColor.DarkGray);
 
 			// Calculate space for each replica (using available height to footer)
 			var headerHeight = 3; // Title + status + separator

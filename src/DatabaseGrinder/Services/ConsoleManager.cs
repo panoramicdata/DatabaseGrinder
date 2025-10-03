@@ -81,7 +81,7 @@ public static class LineChars
 /// <param name="minHeight">Minimum console height to support</param>
 public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 {
-	private readonly Lock _lockObject = new();
+	private readonly object _lockObject = new();
 	private int _currentWidth;
 	private int _currentHeight;
 	private bool _isInitialized;
@@ -298,6 +298,105 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	}
 
 	/// <summary>
+	/// Try to set minimum window size (platform dependent)
+	/// </summary>
+	private void TrySetMinimumWindowSize()
+	{
+		try
+		{
+			// Only works on Windows and some terminals
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				// Try to set minimum window size if supported
+				// This may not work in all terminal types
+				var currentWidth = Console.WindowWidth;
+				var currentHeight = Console.WindowHeight;
+				
+				if (currentWidth < MinWidth || currentHeight < MinHeight)
+				{
+					try
+					{
+						Console.SetWindowSize(
+							Math.Max(currentWidth, MinWidth), 
+							Math.Max(currentHeight, MinHeight)
+						);
+					}
+					catch
+					{
+						// Silently fail if setting window size is not supported
+					}
+				}
+			}
+		}
+		catch
+		{
+			// Platform doesn't support window size manipulation
+		}
+	}
+
+	/// <summary>
+	/// Show "Window too small" message centered on screen
+	/// </summary>
+	private void ShowWindowTooSmallMessage()
+	{
+		try
+		{
+			Console.Clear();
+			Console.CursorVisible = false;
+
+			var messages = new[]
+			{
+				"Window too small",
+				$"Minimum: {MinWidth}x{MinHeight}",
+				$"Current: {_currentWidth}x{_currentHeight}",
+				"",
+				"Please resize your terminal window",
+				"Press any key to retry..."
+			};
+
+			var startY = Math.Max(0, (_currentHeight - messages.Length) / 2);
+
+			for (int i = 0; i < messages.Length; i++)
+			{
+				var message = messages[i];
+				var x = Math.Max(0, (_currentWidth - message.Length) / 2);
+				var y = Math.Min(startY + i, _currentHeight - 1);
+
+				if (y >= 0 && y < _currentHeight)
+				{
+					Console.SetCursorPosition(x, y);
+					if (i == 0) // Title
+					{
+						Console.ForegroundColor = ConsoleColor.Red;
+					}
+					else if (i == 1 || i == 2) // Size info
+					{
+						Console.ForegroundColor = ConsoleColor.Yellow;
+					}
+					else if (i == 4) // Instructions
+					{
+						Console.ForegroundColor = ConsoleColor.Cyan;
+					}
+					else
+					{
+						Console.ForegroundColor = ConsoleColor.Gray;
+					}
+					
+					Console.Write(message);
+				}
+			}
+
+			Console.ResetColor();
+		}
+		catch
+		{
+			// Fallback for very small or problematic terminals
+			Console.Clear();
+			Console.WriteLine("Window too small - please resize");
+		}
+	}
+
+	/// <summary>
 	/// Draw the permanent branding area at the top and footer at the bottom
 	/// </summary>
 	public void DrawBrandingArea()
@@ -313,17 +412,20 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 
 			// Create branding text with logo
 			var brandText = GetBrandingText();
-
+			
 			// Draw branding with orange background for the logo part only
 			var brandingX = 0;
+			var logoStart = _supportsUnicode ? "DatabaseGrinder  ".Length : "DatabaseGrinder  ".Length;
+			var logoEnd = GetLogoLength();
+			
 			for (int i = 0; i < brandText.Length && brandingX < _currentWidth; i++)
 			{
 				var ch = brandText[i];
 				var fg = ConsoleColor.White;
 				var bg = ConsoleColor.Black; // Default background
 
-				// Only apply orange background to the logo portion (not the space after Unicode char)
-				if (i < GetLogoLength())
+				// Apply orange background to the logo portion only (panoramic data part)
+				if (i >= logoStart && i < logoEnd)
 				{
 					bg = ConsoleColor.DarkYellow; // Orange-ish background
 				}
@@ -336,17 +438,6 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				brandingX++;
 			}
 
-			// Add keyboard shortcuts on the right side if there's space
-			var shortcuts = " [q=quit Ctrl+Q=cleanup r=refresh h=help]";
-			var shortcutsStartX = _currentWidth - shortcuts.Length;
-			if (shortcutsStartX > brandingX + 2) // Leave at least 2 spaces gap
-			{
-				for (int i = 0; i < shortcuts.Length && shortcutsStartX + i < _currentWidth; i++)
-				{
-					_currentBuffer[shortcutsStartX + i, 0] = new ConsoleCell(shortcuts[i], ConsoleColor.DarkGray, ConsoleColor.Black);
-				}
-			}
-
 			// === BOTTOM FOOTER ROW ===
 			var footerY = FooterStartY;
 
@@ -356,17 +447,10 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				_currentBuffer[footerX, footerY] = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
 			}
 
-			// Left side: Panoramic Data website
-			var website = "https://panoramicdata.com/";
-			for (int i = 0; i < website.Length && i < _currentWidth / 3; i++)
-			{
-				_currentBuffer[i, footerY] = new ConsoleCell(website[i], ConsoleColor.Cyan, ConsoleColor.Black);
-			}
-
-			// Right side: Additional shortcuts
-			var footerShortcuts = "F1=help F5=refresh F12=stats ESC=exit";
-			var footerShortcutsStartX = _currentWidth - footerShortcuts.Length;
-			if (footerShortcutsStartX > website.Length + 2)
+			// Footer shortcuts - centered
+			var footerShortcuts = "q=quit Ctrl+Q=cleanup r=refresh h=help ESC=exit";
+			var footerShortcutsStartX = (_currentWidth - footerShortcuts.Length) / 2;
+			if (footerShortcutsStartX >= 0)
 			{
 				for (int i = 0; i < footerShortcuts.Length && footerShortcutsStartX + i < _currentWidth; i++)
 				{
@@ -391,22 +475,22 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	private string GetBrandingText()
 	{
 		const string nkoChar = "ߝ"; // Unicode Nko letter FA
-
+		
 		if (_supportsUnicode)
 		{
-			// Try Unicode logo first - note: no space between Unicode char and "panoramic"
+			// Try Unicode logo first - with transparent spacer between Unicode char and "panoramic"
 			try
 			{
-				return $"{nkoChar} panoramic data  DatabaseGrinder v1.1.0";
+				return $"DatabaseGrinder  {nkoChar} panoramic data  https://panoramicdata.com/";
 			}
 			catch
 			{
 				// Fallback if Unicode char fails
 			}
 		}
-
+		
 		// Fallback without logo character
-		return "panoramic data  DatabaseGrinder v1.1.0";
+		return "DatabaseGrinder  panoramic data  https://panoramicdata.com/";
 	}
 
 	/// <summary>
@@ -414,7 +498,16 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// </summary>
 	private int GetLogoLength()
 	{
-		return _supportsUnicode ? "ߝ panoramic data".Length : "panoramic data".Length;
+		if (_supportsUnicode)
+		{
+			// "DatabaseGrinder  ߝ panoramic data"
+			return "DatabaseGrinder  ߝ panoramic data".Length;
+		}
+		else
+		{
+			// "DatabaseGrinder  panoramic data"
+			return "DatabaseGrinder  panoramic data".Length;
+		}
 	}
 
 	/// <summary>
@@ -552,12 +645,57 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			// Only draw separator if we have valid position, in content area only (excluding footer)
 			if (separatorX > 0 && separatorX < _currentWidth)
 			{
-				for (int y = ContentStartY + 1; y < FooterStartY; y++) // Skip the separator line under branding
+				// Draw the junction at the top where vertical separator meets horizontal line
+				var topY = ContentStartY;
+				WriteCharAt(separatorX, topY, GetTeeDownChar(), ConsoleColor.DarkGray);
+
+				// Draw vertical line in content area
+				for (int y = ContentStartY + 1; y < FooterStartY; y++)
 				{
 					WriteCharAt(separatorX, y, VerticalLineChar, ConsoleColor.DarkGray);
 				}
 			}
 		}
+	}
+
+	/// <summary>
+	/// Get the appropriate T-piece (tee down) character for the current terminal
+	/// </summary>
+	public char GetTeeDownChar()
+	{
+		return _supportsUnicode ? LineChars.Unicode.TeeDown : 
+		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeDown : 
+		       LineChars.Ascii.TeeDown;
+	}
+
+	/// <summary>
+	/// Get the appropriate T-piece (tee up) character for the current terminal
+	/// </summary>
+	public char GetTeeUpChar()
+	{
+		return _supportsUnicode ? LineChars.Unicode.TeeUp : 
+		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeUp : 
+		       LineChars.Ascii.TeeUp;
+	}
+
+	/// <summary>
+	/// Get the appropriate T-piece (tee right) character for the current terminal
+	/// </summary>
+	public char GetTeeRightChar()
+	{
+		return _supportsUnicode ? LineChars.Unicode.TeeRight : 
+		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeRight : 
+		       LineChars.Ascii.TeeRight;
+	}
+
+	/// <summary>
+	/// Get the appropriate T-piece (tee left) character for the current terminal
+	/// </summary>
+	public char GetTeeLeftChar()
+	{
+		return _supportsUnicode ? LineChars.Unicode.TeeLeft : 
+		       _supportsExtendedAscii ? LineChars.ExtendedAscii.TeeLeft : 
+		       LineChars.Ascii.TeeLeft;
 	}
 
 	/// <summary>
@@ -698,54 +836,6 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		}
 	}
 
-	/// <summary>
-	/// Force a full redraw on the next render
-	/// </summary>
-	public void ForceFullRedraw()
-	{
-		lock (_lockObject)
-		{
-			_needsFullRedraw = true;
-			// Clear previous buffer to force all cells to be considered changed
-			for (int y = 0; y < _currentHeight; y++)
-			{
-				for (int x = 0; x < _currentWidth; x++)
-				{
-					_previousBuffer[x, y] = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
-				}
-			}
-		}
-	}
-
-	/// <summary>
-	/// Get performance statistics for debugging
-	/// </summary>
-	public string GetPerformanceStats()
-	{
-		lock (_lockObject)
-		{
-			if (_totalRenderCalls == 0) return "No renders yet";
-
-			var totalCells = _currentWidth * _currentHeight;
-			var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
-			var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
-
-			return $"Renders: {_totalRenderCalls}, Avg cells/render: {avgCellsPerRender:F1} ({avgPercentage:F1}%)";
-		}
-	}
-
-	/// <summary>
-	/// Get platform-specific information for debugging
-	/// </summary>
-	/// <returns>Platform information string</returns>
-	public string GetPlatformInfo()
-	{
-		var os = RuntimeInformation.OSDescription;
-		var arch = RuntimeInformation.OSArchitecture;
-		var unicode = _supportsUnicode ? "Unicode" : "ASCII";
-		return $"{os} ({arch}) - {unicode} support";
-	}
-
 	private void WriteBatch(int x, int y, string text, ConsoleColor foreground, ConsoleColor background,
 						   ref ConsoleColor currentForeground, ref ConsoleColor currentBackground)
 	{
@@ -810,101 +900,50 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	}
 
 	/// <summary>
-	/// Try to set the minimum window size to prevent resizing below the supported minimum
+	/// Force a full redraw on the next render
 	/// </summary>
-	private void TrySetMinimumWindowSize()
+	public void ForceFullRedraw()
 	{
-		try
+		lock (_lockObject)
 		{
-			// Only works on Windows and some terminals
-			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			_needsFullRedraw = true;
+			// Clear previous buffer to force all cells to be considered changed
+			for (int y = 0; y < _currentHeight; y++)
 			{
-				// Try to set minimum window size if supported
-				// This may not work in all terminal types
-				var currentWidth = Console.WindowWidth;
-				var currentHeight = Console.WindowHeight;
-
-				if (currentWidth < MinWidth || currentHeight < MinHeight)
+				for (int x = 0; x < _currentWidth; x++)
 				{
-					try
-					{
-						Console.SetWindowSize(
-							Math.Max(currentWidth, MinWidth),
-							Math.Max(currentHeight, MinHeight)
-						);
-					}
-					catch
-					{
-						// Silently fail if setting window size is not supported
-					}
+					_previousBuffer[x, y] = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
 				}
 			}
-		}
-		catch
-		{
-			// Platform doesn't support window size manipulation
 		}
 	}
 
 	/// <summary>
-	/// Show "Window too small" message centered on screen
+	/// Get performance statistics for debugging
 	/// </summary>
-	private void ShowWindowTooSmallMessage()
+	public string GetPerformanceStats()
 	{
-		try
+		lock (_lockObject)
 		{
-			Console.Clear();
-			Console.CursorVisible = false;
+			if (_totalRenderCalls == 0) return "No renders yet";
 
-			var messages = new[]
-			{
-				"Window too small",
-				$"Minimum: {MinWidth}x{MinHeight}",
-				$"Current: {_currentWidth}x{_currentHeight}",
-				"",
-				"Please resize your terminal window",
-				"Press any key to retry..."
-			};
+			var totalCells = _currentWidth * _currentHeight;
+			var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
+			var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
 
-			var startY = Math.Max(0, (_currentHeight - messages.Length) / 2);
-
-			for (int i = 0; i < messages.Length; i++)
-			{
-				var message = messages[i];
-				var x = Math.Max(0, (_currentWidth - message.Length) / 2);
-				var y = Math.Min(startY + i, _currentHeight - 1);
-
-				if (y >= 0 && y < _currentHeight)
-				{
-					Console.SetCursorPosition(x, y);
-					if (i == 0) // Title
-					{
-						Console.ForegroundColor = ConsoleColor.Red;
-					}
-					else if (i == 1 || i == 2) // Size info
-					{
-						Console.ForegroundColor = ConsoleColor.Yellow;
-					}
-					else if (i == 4) // Instructions
-					{
-						Console.ForegroundColor = ConsoleColor.Cyan;
-					}
-					else
-					{
-						Console.ForegroundColor = ConsoleColor.Gray;
-					}
-
-					Console.Write(message);
-				}
-			}
-
-			Console.ResetColor();
+			return $"Renders: {_totalRenderCalls}, Avg cells/render: {avgCellsPerRender:F1} ({avgPercentage:F1}%)";
 		}
-		catch
-		{
-			// Fallback for very small or problematic terminals
-			Console.Clear();
-			Console.WriteLine("Window too small - please resize");
-		}
+	}
+
+	/// <summary>
+	/// Get platform-specific information for debugging
+	/// </summary>
+	/// <returns>Platform information string</returns>
+	public string GetPlatformInfo()
+	{
+		var os = RuntimeInformation.OSDescription;
+		var arch = RuntimeInformation.OSArchitecture;
+		var unicode = _supportsUnicode ? "Unicode" : "ASCII";
+		return $"{os} ({arch}) - {unicode} support";
 	}
 }

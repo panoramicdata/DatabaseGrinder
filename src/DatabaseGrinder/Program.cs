@@ -137,68 +137,61 @@ internal class Program
 		if (_serviceProvider == null)
 		{
 			Console.WriteLine("Service provider not available for cleanup");
+			Environment.Exit(1);
 			return;
 		}
 
 		try
 		{
+			using var scope = _serviceProvider.CreateScope();
+			var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+			var cleanupService = scope.ServiceProvider.GetRequiredService<DatabaseCleanupService>();
+
+			// Log shutdown initiation
+			logger.LogWarning("Ctrl+Q pressed - Initiating shutdown with database cleanup");
+			
 			// Clean up console first
 			CleanupConsole();
 
-			// Show cleanup confirmation
+			// Show cleanup information
 			Console.WriteLine();
 			Console.ForegroundColor = ConsoleColor.Yellow;
-			Console.WriteLine("DatabaseGrinder CLEANUP MODE");
-			Console.WriteLine("===========================");
+			Console.WriteLine("DatabaseGrinder - Shutdown with Cleanup");
+			Console.WriteLine("=====================================");
 			Console.ResetColor();
-
-			using var scope = _serviceProvider.CreateScope();
-			var cleanupService = scope.ServiceProvider.GetRequiredService<DatabaseCleanupService>();
-			var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
 			var cleanupInfo = cleanupService.GetCleanupInfo();
-
-			Console.WriteLine($"This will:");
+			
+			Console.WriteLine("Cleaning up database resources:");
 			Console.ForegroundColor = ConsoleColor.Red;
-			Console.WriteLine($"  • Drop read-only user: {cleanupInfo.ReaderUsername}");
-			Console.WriteLine($"  • Drop database: {cleanupInfo.DatabaseName}");
+			Console.WriteLine($"  • Dropping read-only user: {cleanupInfo.ReaderUsername}");
+			Console.WriteLine($"  • Dropping database: {cleanupInfo.DatabaseName}");
 			Console.ResetColor();
 			Console.ForegroundColor = ConsoleColor.Green;
-			Console.WriteLine($"  • Keep main user: {cleanupInfo.MainUsername} (SAFE)");
+			Console.WriteLine($"  • Preserving main user: {cleanupInfo.MainUsername} (SAFE)");
 			Console.ResetColor();
 			Console.WriteLine();
+			
+			Console.ForegroundColor = ConsoleColor.Yellow;
+			Console.WriteLine("Performing cleanup...");
+			Console.ResetColor();
 
-			Console.Write("Are you sure? Type 'YES' to confirm: ");
-			var confirmation = Console.ReadLine();
-
-			if (confirmation?.ToUpperInvariant() == "YES")
-			{
-				Console.WriteLine();
-				Console.ForegroundColor = ConsoleColor.Yellow;
-				Console.WriteLine("Performing cleanup...");
-				Console.ResetColor();
-
-				logger.LogWarning("User requested database cleanup via Ctrl+Q");
-
-				await cleanupService.CleanupDatabaseResourcesAsync();
-
-				Console.ForegroundColor = ConsoleColor.Green;
-				Console.WriteLine("✓ Cleanup completed successfully!");
-				Console.ResetColor();
-				Console.WriteLine();
-				Console.WriteLine("Database resources have been removed.");
-				Console.WriteLine("Press any key to exit...");
-				Console.ReadKey();
-			}
-			else
-			{
-				Console.WriteLine();
-				Console.ForegroundColor = ConsoleColor.Cyan;
-				Console.WriteLine("Cleanup cancelled.");
-				Console.ResetColor();
-				Console.WriteLine("Press any key to exit...");
-				Console.ReadKey();
-			}
+			logger.LogWarning("Performing database cleanup via Ctrl+Q");
+			
+			await cleanupService.CleanupDatabaseResourcesAsync();
+			
+			Console.ForegroundColor = ConsoleColor.Green;
+			Console.WriteLine("✓ Cleanup completed successfully!");
+			Console.ResetColor();
+			Console.WriteLine();
+			
+			logger.LogInformation("Database cleanup completed successfully");
+			
+			Console.WriteLine("DatabaseGrinder shutdown complete.");
+			Console.WriteLine("Exiting in 2 seconds...");
+			
+			// Pause for 2 seconds as requested
+			await Task.Delay(2000);
 		}
 		catch (Exception ex)
 		{
@@ -206,10 +199,10 @@ internal class Program
 			Console.ForegroundColor = ConsoleColor.Red;
 			Console.WriteLine($"Cleanup failed: {ex.Message}");
 			Console.ResetColor();
-			Console.WriteLine("Press any key to exit...");
-			Console.ReadKey();
+			Console.WriteLine("Exiting in 2 seconds...");
+			await Task.Delay(2000);
 		}
-
+		
 		Environment.Exit(0);
 	}
 
