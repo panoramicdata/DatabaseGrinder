@@ -35,6 +35,12 @@ internal partial class Program
 			Console.OutputEncoding = System.Text.Encoding.UTF8;
 			Console.InputEncoding = System.Text.Encoding.UTF8;
 
+			// Set console title if supported by the OS
+			if (OperatingSystem.IsWindows() || OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
+			{
+				Console.Title = "Database Grinder";
+			}
+
 			// Clear console and immediately start UI (no splash screen)
 			Console.Clear();
 			Console.CursorVisible = false;
