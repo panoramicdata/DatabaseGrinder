@@ -1,0 +1,8 @@
+{
+  "solution": {
+    "path": "DatabaseGrinder.slnx",
+    "projects": [
+      "src/DatabaseGrinder/DatabaseGrinder.csproj"
+    ]
+  }
+}
