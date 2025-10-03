@@ -81,9 +81,7 @@ public static class LineChars
 /// <param name="minHeight">Minimum console height to support</param>
 public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 {
-	private readonly object _lockObject = new();
-	private int _currentWidth;
-	private int _currentHeight;
+	private readonly Lock _lockObject = new();
 	private bool _isInitialized;
 	private ConsoleCell[,] _currentBuffer = new ConsoleCell[0, 0];
 	private ConsoleCell[,] _previousBuffer = new ConsoleCell[0, 0];
@@ -111,27 +109,27 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// <summary>
 	/// Current console width
 	/// </summary>
-	public int Width => _currentWidth;
+	public int Width { get; private set; }
 
 	/// <summary>
 	/// Current console height
 	/// </summary>
-	public int Height => _currentHeight;
+	public int Height { get; private set; }
 
 	/// <summary>
 	/// Height of the branding area at the top (1 row for compact branding)
 	/// </summary>
-	public int BrandingHeight => 1;
+	public static int BrandingHeight => 1;
 
 	/// <summary>
 	/// Height of the footer area at the bottom (1 row for shortcuts)
 	/// </summary>
-	public int FooterHeight => 1;
+	public static int FooterHeight => 1;
 
 	/// <summary>
 	/// Available height for content (excluding branding and footer areas)
 	/// </summary>
-	public int ContentHeight => Math.Max(0, _currentHeight - BrandingHeight - FooterHeight);
+	public int ContentHeight => Math.Max(0, Height - BrandingHeight - FooterHeight);
 
 	/// <summary>
 	/// Y position where content starts (after branding area)
@@ -141,12 +139,12 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// <summary>
 	/// Y position where footer starts
 	/// </summary>
-	public int FooterStartY => _currentHeight - FooterHeight;
+	public int FooterStartY => Height - FooterHeight;
 
 	/// <summary>
 	/// X position of the vertical separator
 	/// </summary>
-	public int SeparatorX => _currentWidth / 2;
+	public int SeparatorX => Width / 2;
 
 	/// <summary>
 	/// Gets the width of the left pane (excluding the separator)
@@ -164,7 +162,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// Gets the width of the right pane (excluding the separator)
 	/// Right pane uses columns SeparatorX+1 to Width-1
 	/// </summary>
-	public int RightPaneWidth => Math.Max(0, _currentWidth - RightPaneStartX);
+	public int RightPaneWidth => Math.Max(0, Width - RightPaneStartX);
 
 	/// <summary>
 	/// Event raised when console size changes
@@ -189,11 +187,11 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// Get detailed layout information for debugging
 	/// </summary>
 	/// <returns>Layout information string</returns>
-	public string GetLayoutInfo() => $"Console: {_currentWidth}x{_currentHeight}, " +
-			   $"Content: {_currentWidth}x{ContentHeight} (starts at Y:{ContentStartY}), " +
+	public string GetLayoutInfo() => $"Console: {Width}x{Height}, " +
+			   $"Content: {Width}x{ContentHeight} (starts at Y:{ContentStartY}), " +
 			   $"Left: 0-{LeftPaneWidth - 1} ({LeftPaneWidth} chars), " +
 			   $"Sep: {SeparatorX}, " +
-			   $"Right: {RightPaneStartX}-{_currentWidth - 1} ({RightPaneWidth} chars)";
+			   $"Right: {RightPaneStartX}-{Width - 1} ({RightPaneWidth} chars)";
 
 	/// <summary>
 	/// Initialize the console and start monitoring for size changes
@@ -219,17 +217,17 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			TrySetMinimumWindowSize();
 
 			// Check if console is too small
-			if (_currentWidth < MinWidth || _currentHeight < MinHeight)
+			if (Width < MinWidth || Height < MinHeight)
 			{
 				ShowWindowTooSmallMessage();
 				return; // Don't initialize buffers, just show the message
 			}
 
 			// Validate layout makes sense
-			if (LeftPaneWidth + RightPaneWidth + 1 != _currentWidth) // +1 for separator
+			if (LeftPaneWidth + RightPaneWidth + 1 != Width) // +1 for separator
 			{
 				throw new InvalidOperationException(
-					$"Layout calculation error: Left({LeftPaneWidth}) + Sep(1) + Right({RightPaneWidth}) != Total({_currentWidth})");
+					$"Layout calculation error: Left({LeftPaneWidth}) + Sep(1) + Right({RightPaneWidth}) != Total({Width})");
 			}
 
 			// Initialize buffers
@@ -283,7 +281,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// <summary>
 	/// Test if the terminal supports Unicode line drawing characters
 	/// </summary>
-	private bool TestUnicodeSupport()
+	private static bool TestUnicodeSupport()
 	{
 		try
 		{
@@ -348,21 +346,21 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			{
 				"Window too small",
 				$"Minimum: {MinWidth}x{MinHeight}",
-				$"Current: {_currentWidth}x{_currentHeight}",
+				$"Current: {Width}x{Height}",
 				"",
 				"Please resize your terminal window",
 				"Press any key to retry..."
 			};
 
-			var startY = Math.Max(0, (_currentHeight - messages.Length) / 2);
+			var startY = Math.Max(0, (Height - messages.Length) / 2);
 
 			for (int i = 0; i < messages.Length; i++)
 			{
 				var message = messages[i];
-				var x = Math.Max(0, (_currentWidth - message.Length) / 2);
-				var y = Math.Min(startY + i, _currentHeight - 1);
+				var x = Math.Max(0, (Width - message.Length) / 2);
+				var y = Math.Min(startY + i, Height - 1);
 
-				if (y >= 0 && y < _currentHeight)
+				if (y >= 0 && y < Height)
 				{
 					Console.SetCursorPosition(x, y);
 					if (i == 0) // Title
@@ -405,7 +403,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		{
 			// === TOP BRANDING ROW ===
 			// Clear the branding area
-			for (int brandX = 0; brandX < _currentWidth; brandX++)
+			for (int brandX = 0; brandX < Width; brandX++)
 			{
 				_currentBuffer[brandX, 0] = new ConsoleCell(' ', ConsoleColor.White, ConsoleColor.Black);
 			}
@@ -416,7 +414,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			// Draw branding with orange background for the logo part only
 			var brandingX = 0;
 
-			for (int i = 0; i < brandText.Length && brandingX < _currentWidth; i++)
+			for (int i = 0; i < brandText.Length && brandingX < Width; i++)
 			{
 				var ch = brandText[i];
 				var fg = ConsoleColor.White;
@@ -460,7 +458,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				brandingX++;
 
 				// Add extra background space immediately after Unicode character if it overflows visually
-				if (_supportsUnicode && i == 0 && brandingX < _currentWidth)
+				if (_supportsUnicode && i == 0 && brandingX < Width)
 				{
 					// The Unicode character might take more visual space, so add an extra orange background cell right after it
 					_currentBuffer[brandingX, 0] = new ConsoleCell(' ', ConsoleColor.White, ConsoleColor.DarkYellow);
@@ -472,35 +470,35 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			var footerY = FooterStartY;
 
 			// Clear the footer area
-			for (int footerX = 0; footerX < _currentWidth; footerX++)
+			for (int footerX = 0; footerX < Width; footerX++)
 			{
 				_currentBuffer[footerX, footerY] = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
 			}
 
 			// Footer shortcuts - centered
 			var footerShortcuts = "Q = Quit   R = Refresh   ESC/Ctrl+C = exit   Ctrl+Q = Delete r/o user, delete database and exit";
-			var footerShortcutsStartX = (_currentWidth - footerShortcuts.Length) / 2;
+			var footerShortcutsStartX = (Width - footerShortcuts.Length) / 2;
 			if (footerShortcutsStartX >= 0)
 			{
-				for (int i = 0; i < footerShortcuts.Length && footerShortcutsStartX + i < _currentWidth; i++)
+				for (int i = 0; i < footerShortcuts.Length && footerShortcutsStartX + i < Width; i++)
 				{
 					_currentBuffer[footerShortcutsStartX + i, footerY] = new ConsoleCell(footerShortcuts[i], ConsoleColor.DarkGray, ConsoleColor.Black);
 				}
 			}
 
 			// Draw a separator line below branding if there's space
-			if (_currentHeight > 2)
+			if (Height > 2)
 			{
-				for (int sepX = 0; sepX < _currentWidth; sepX++)
+				for (int sepX = 0; sepX < Width; sepX++)
 				{
 					_currentBuffer[sepX, ContentStartY] = new ConsoleCell(HorizontalLineChar, ConsoleColor.DarkGray, ConsoleColor.Black);
 				}
 			}
 
 			// Draw a separator line above footer if there's space
-			if (_currentHeight > 3)
+			if (Height > 3)
 			{
-				for (int sepX = 0; sepX < _currentWidth; sepX++)
+				for (int sepX = 0; sepX < Width; sepX++)
 				{
 					_currentBuffer[sepX, FooterStartY - 1] = new ConsoleCell(HorizontalLineChar, ConsoleColor.DarkGray, ConsoleColor.Black);
 				}
@@ -559,16 +557,16 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 			var newWidth = Console.WindowWidth;
 			var newHeight = Console.WindowHeight;
 
-			if (newWidth != _currentWidth || newHeight != _currentHeight)
+			if (newWidth != Width || newHeight != Height)
 			{
-				var oldWidth = _currentWidth;
-				var oldHeight = _currentHeight;
+				var oldWidth = Width;
+				var oldHeight = Height;
 
-				_currentWidth = newWidth;
-				_currentHeight = newHeight;
+				Width = newWidth;
+				Height = newHeight;
 
 				// Check if window is now too small
-				if (_currentWidth < MinWidth || _currentHeight < MinHeight)
+				if (Width < MinWidth || Height < MinHeight)
 				{
 					ShowWindowTooSmallMessage();
 					_isInitialized = false; // Mark as not initialized until size is acceptable
@@ -576,14 +574,14 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				}
 
 				// If we were previously too small but now acceptable, reinitialize
-				if (!_isInitialized && _currentWidth >= MinWidth && _currentHeight >= MinHeight)
+				if (!_isInitialized && Width >= MinWidth && Height >= MinHeight)
 				{
 					// Reinitialize everything
 					InitializeBuffers();
 					_needsFullRedraw = true;
 					_isInitialized = true;
 
-					SizeChanged?.Invoke(_currentWidth, _currentHeight);
+					SizeChanged?.Invoke(Width, Height);
 					return true;
 				}
 
@@ -594,7 +592,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 					InitializeBuffers();
 					_needsFullRedraw = true;
 
-					SizeChanged?.Invoke(_currentWidth, _currentHeight);
+					SizeChanged?.Invoke(Width, Height);
 					return true;
 				}
 			}
@@ -612,9 +610,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		{
 			var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
 
-			for (int y = 0; y < _currentHeight; y++)
+			for (int y = 0; y < Height; y++)
 			{
-				for (int x = 0; x < _currentWidth; x++)
+				for (int x = 0; x < Width; x++)
 				{
 					_currentBuffer[x, y] = emptyCell;
 				}
@@ -634,16 +632,16 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	{
 		lock (_lockObject)
 		{
-			if (x >= 0 && y >= 0 && y < _currentHeight && !string.IsNullOrEmpty(text))
+			if (x >= 0 && y >= 0 && y < Height && !string.IsNullOrEmpty(text))
 			{
 				var fg = foreground ?? ConsoleColor.Gray;
 				var bg = background ?? ConsoleColor.Black;
 
 				// Ensure we don't write beyond console boundaries
-				var maxLength = Math.Min(text.Length, _currentWidth - x);
+				var maxLength = Math.Min(text.Length, Width - x);
 				for (int i = 0; i < maxLength; i++)
 				{
-					if (x + i < _currentWidth) // Double-check boundary
+					if (x + i < Width) // Double-check boundary
 					{
 						_currentBuffer[x + i, y] = new ConsoleCell(text[i], fg, bg);
 					}
@@ -664,7 +662,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	{
 		lock (_lockObject)
 		{
-			if (x >= 0 && y >= 0 && x < _currentWidth && y < _currentHeight)
+			if (x >= 0 && y >= 0 && x < Width && y < Height)
 			{
 				var fg = foreground ?? ConsoleColor.Gray;
 				var bg = background ?? ConsoleColor.Black;
@@ -682,7 +680,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		{
 			var separatorX = SeparatorX;
 			// Only draw separator if we have valid position, in content area only (excluding footer)
-			if (separatorX > 0 && separatorX < _currentWidth)
+			if (separatorX > 0 && separatorX < Width)
 			{
 				// Draw the junction at the top where vertical separator meets horizontal line
 				var topY = ContentStartY;
@@ -752,7 +750,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		lock (_lockObject)
 		{
 			// If console is too small, just show the message
-			if (_currentWidth < MinWidth || _currentHeight < MinHeight)
+			if (Width < MinWidth || Height < MinHeight)
 			{
 				ShowWindowTooSmallMessage();
 				return;
@@ -783,7 +781,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				var currentBackground = originalBackground;
 
 				// Optimize: batch consecutive character writes where possible
-				for (int y = 0; y < _currentHeight; y++)
+				for (int y = 0; y < Height; y++)
 				{
 					var lineHasChanges = false;
 					var batchStart = -1;
@@ -793,7 +791,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 					_clearLineBuilder.Clear();
 
 					// First pass: check if this line has any changes and build batch
-					for (int x = 0; x < _currentWidth; x++)
+					for (int x = 0; x < Width; x++)
 					{
 						var currentCell = _currentBuffer[x, y];
 						var previousCell = _previousBuffer[x, y];
@@ -873,7 +871,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 #if DEBUG
 			if (_totalRenderCalls % 100 == 0 && _totalRenderCalls > 0)
 			{
-				var totalCells = _currentWidth * _currentHeight;
+				var totalCells = Width * Height;
 				var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
 				var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
 				System.Diagnostics.Debug.WriteLine($"Render performance: Avg {avgCellsPerRender:F1} cells/render ({avgPercentage:F1}%) over {_totalRenderCalls} renders");
@@ -888,7 +886,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		try
 		{
 			// Ensure we don't write beyond console boundaries
-			if (x >= 0 && y >= 0 && x < _currentWidth && y < _currentHeight)
+			if (x >= 0 && y >= 0 && x < Width && y < Height)
 			{
 				Console.SetCursorPosition(x, y);
 
@@ -905,7 +903,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 				}
 
 				// Truncate text if it would exceed console width
-				var maxLength = _currentWidth - x;
+				var maxLength = Width - x;
 				if (text.Length > maxLength)
 				{
 					text = text[..maxLength];
@@ -922,22 +920,22 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 
 	private void UpdateSize()
 	{
-		_currentWidth = Console.WindowWidth;
-		_currentHeight = Console.WindowHeight;
+		Width = Console.WindowWidth;
+		Height = Console.WindowHeight;
 	}
 
 	private void InitializeBuffers()
 	{
-		_currentBuffer = new ConsoleCell[_currentWidth, _currentHeight];
-		_previousBuffer = new ConsoleCell[_currentWidth, _currentHeight];
+		_currentBuffer = new ConsoleCell[Width, Height];
+		_previousBuffer = new ConsoleCell[Width, Height];
 
 		var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
 		var invalidCell = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
 
 		// Initialize with empty cells
-		for (int y = 0; y < _currentHeight; y++)
+		for (int y = 0; y < Height; y++)
 		{
-			for (int x = 0; x < _currentWidth; x++)
+			for (int x = 0; x < Width; x++)
 			{
 				_currentBuffer[x, y] = emptyCell;
 				_previousBuffer[x, y] = invalidCell; // Force initial draw
@@ -954,9 +952,9 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		{
 			_needsFullRedraw = true;
 			// Clear previous buffer to force all cells to be considered changed
-			for (int y = 0; y < _currentHeight; y++)
+			for (int y = 0; y < Height; y++)
 			{
-				for (int x = 0; x < _currentWidth; x++)
+				for (int x = 0; x < Width; x++)
 				{
 					_previousBuffer[x, y] = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
 				}
@@ -973,7 +971,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		{
 			if (_totalRenderCalls == 0) return "No renders yet";
 
-			var totalCells = _currentWidth * _currentHeight;
+			var totalCells = Width * Height;
 			var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
 			var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
 

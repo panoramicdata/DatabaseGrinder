@@ -15,7 +15,6 @@ public class UIManager(
 	ConsoleManager consoleManager,
 	LeftPane leftPane,
 	RightPane rightPane,
-	IServiceProvider serviceProvider,
 	IHostApplicationLifetime hostLifetime) : BackgroundService
 {
 	private readonly DatabaseGrinderSettings _settings = settings.Value;
@@ -219,7 +218,7 @@ public class UIManager(
 	private void HandleKeyPress(ConsoleKeyInfo key)
 	{
 		// Add debug logging for key presses
-		logger.LogDebug("Key pressed: '{KeyChar}' (0x{KeyCode:X2}), Key: {Key}, Modifiers: {Modifiers}", 
+		logger.LogDebug("Key pressed: '{KeyChar}' (0x{KeyCode:X2}), Key: {Key}, Modifiers: {Modifiers}",
 			key.KeyChar, (int)key.KeyChar, key.Key, key.Modifiers);
 
 		switch (key.KeyChar)
@@ -323,6 +322,7 @@ public class UIManager(
 						{
 							leftPane.AddLogEntry($"Unhandled key: '{key.KeyChar}' ({key.Key}) Modifiers: {key.Modifiers}", LogLevel.Debug);
 						}
+
 						break;
 				}
 

@@ -7,13 +7,14 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using System.Text.RegularExpressions;
 
 namespace DatabaseGrinder;
 
 /// <summary>
 /// Main entry point for the DatabaseGrinder application
 /// </summary>
-internal class Program
+internal partial class Program
 {
 	private static ConsoleManager? _consoleManager;
 	private static IServiceProvider? _serviceProvider;
@@ -150,7 +151,7 @@ internal class Program
 
 			// Log shutdown initiation
 			logger.LogWarning("Ctrl+Q pressed - Initiating shutdown with database cleanup");
-			
+
 			// Clean up console first
 			CleanupConsole();
 
@@ -161,8 +162,8 @@ internal class Program
 			Console.WriteLine("=====================================");
 			Console.ResetColor();
 
-			var cleanupInfo = cleanupService.GetCleanupInfo();
-			
+			var (DatabaseName, ReaderUsername, MainUsername) = cleanupService.GetCleanupInfo();
+
 			Console.WriteLine("Stopping background services...");
 			Console.ForegroundColor = ConsoleColor.Cyan;
 			Console.WriteLine("  • Stopping ReplicationMonitor service");
@@ -172,39 +173,39 @@ internal class Program
 			// Stop background services first to prevent connection errors
 			logger.LogWarning("Stopping background services before database cleanup");
 			hostLifetime.StopApplication();
-			
+
 			// Give services time to shut down gracefully
 			Console.WriteLine("Waiting for services to shut down...");
 			await Task.Delay(2000);
-			
+
 			Console.WriteLine("Cleaning up database resources:");
 			Console.ForegroundColor = ConsoleColor.Red;
-			Console.WriteLine($"  • Dropping read-only user: {cleanupInfo.ReaderUsername}");
-			Console.WriteLine($"  • Dropping database: {cleanupInfo.DatabaseName}");
+			Console.WriteLine($"  • Dropping read-only user: {ReaderUsername}");
+			Console.WriteLine($"  • Dropping database: {DatabaseName}");
 			Console.ResetColor();
 			Console.ForegroundColor = ConsoleColor.Green;
-			Console.WriteLine($"  • Preserving main user: {cleanupInfo.MainUsername} (SAFE)");
+			Console.WriteLine($"  • Preserving main user: {MainUsername} (SAFE)");
 			Console.ResetColor();
 			Console.WriteLine();
-			
+
 			Console.ForegroundColor = ConsoleColor.Yellow;
 			Console.WriteLine("Performing cleanup...");
 			Console.ResetColor();
 
 			logger.LogWarning("Performing database cleanup via Ctrl+Q");
-			
+
 			await cleanupService.CleanupDatabaseResourcesAsync();
-			
+
 			Console.ForegroundColor = ConsoleColor.Green;
 			Console.WriteLine("✓ Cleanup completed successfully!");
 			Console.ResetColor();
 			Console.WriteLine();
-			
+
 			logger.LogInformation("Database cleanup completed successfully");
-			
+
 			Console.WriteLine("DatabaseGrinder shutdown complete.");
 			Console.WriteLine("Exiting in 2 seconds...");
-			
+
 			// Pause for 2 seconds as requested
 			await Task.Delay(2000);
 		}
@@ -217,7 +218,7 @@ internal class Program
 			Console.WriteLine("Exiting in 2 seconds...");
 			await Task.Delay(2000);
 		}
-		
+
 		Environment.Exit(0);
 	}
 
@@ -252,7 +253,7 @@ internal class Program
 	/// </summary>
 	/// <param name="services">Service collection</param>
 	/// <param name="configuration">Application configuration</param>
-	private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
+	private static void ConfigureServices(IServiceCollection services, ConfigurationManager configuration)
 	{
 		// Add logging with custom configuration to prevent console interference
 		services.AddLogging(builder =>
@@ -287,7 +288,7 @@ internal class Program
 		services.AddSingleton<RightPane>();
 		services.AddScoped<DatabaseSetupService>();
 		services.AddScoped<DatabaseCleanupService>(); // Add cleanup service
-		
+
 		// Add background services (order matters for dependencies)
 		services.AddHostedService<DatabaseWriter>();
 		services.AddHostedService<ReplicationMonitor>();
@@ -316,6 +317,7 @@ internal class Program
 			{
 				logger.LogError("  - {Error}", error);
 			}
+
 			throw new InvalidOperationException("Configuration validation failed. See log for details.");
 		}
 
@@ -472,13 +474,10 @@ internal class Program
 	/// </summary>
 	/// <param name="connectionString">Connection string to mask</param>
 	/// <returns>Masked connection string</returns>
-	private static string MaskConnectionString(string connectionString)
-	{
+	private static string MaskConnectionString(string connectionString) =>
 		// Simple masking - replace password values
-		return System.Text.RegularExpressions.Regex.Replace(
-			connectionString,
-			@"(password=)[^;]+",
-			"$1***",
-			System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-	}
+		ConnectionStringMaskRegex().Replace(connectionString, "$1***");
+
+	[GeneratedRegex(@"(password=)[^;]+", RegexOptions.IgnoreCase, "en-GB")]
+	private static partial Regex ConnectionStringMaskRegex();
 }

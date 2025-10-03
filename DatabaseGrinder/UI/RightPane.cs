@@ -66,9 +66,9 @@ public class RightPane(ConsoleManager consoleManager)
 			consoleManager.WriteAt(titleX, startY, title, ConsoleColor.White, ConsoleColor.DarkBlue);
 
 			// Draw overall status summary
-			var statusSummary = GetOverallStatusSummary();
-			var summaryX = paneStartX + (paneWidth - statusSummary.Text.Length) / 2;
-			consoleManager.WriteAt(summaryX, startY + 1, statusSummary.Text, statusSummary.Color);
+			var (Text, Color) = GetOverallStatusSummary();
+			var summaryX = paneStartX + (paneWidth - Text.Length) / 2;
+			consoleManager.WriteAt(summaryX, startY + 1, Text, Color);
 
 			// Draw separator line using proper line drawing character with T-piece
 			var separatorY = startY + 2;
@@ -190,8 +190,8 @@ public class RightPane(ConsoleManager consoleManager)
 		// Line 3: Progress bar showing lag severity
 		if (replica.Status == ConnectionStatus.Connected && replica.TimeLag.HasValue)
 		{
-			var progressBar = CreateLagProgressBar(replica.TimeLag.Value, width - 2);
-			consoleManager.WriteAt(startX, startY + 2, progressBar.Bar, progressBar.Color);
+			var (Bar, Color) = CreateLagProgressBar(replica.TimeLag.Value, width - 2);
+			consoleManager.WriteAt(startX, startY + 2, Bar, Color);
 		}
 
 		if (height < 4) return;
@@ -239,7 +239,7 @@ public class RightPane(ConsoleManager consoleManager)
 		}
 	}
 
-	private string GetDetailedLagInfo(ReplicaInfo replica)
+	private static string GetDetailedLagInfo(ReplicaInfo replica)
 	{
 		var parts = new List<string>();
 
@@ -261,7 +261,7 @@ public class RightPane(ConsoleManager consoleManager)
 		return $"Behind: {string.Join(", ", parts)}";
 	}
 
-	private string GetMissingSequenceInfo(ReplicaInfo replica)
+	private static string GetMissingSequenceInfo(ReplicaInfo replica)
 	{
 		if (replica.MissingSequenceCount == -1)
 		{
@@ -287,7 +287,7 @@ public class RightPane(ConsoleManager consoleManager)
 		return $"# {replica.MissingSequenceCount} missing sequences";
 	}
 
-	private ConsoleColor GetSequenceLagColor(ReplicaInfo replica)
+	private static ConsoleColor GetSequenceLagColor(ReplicaInfo replica)
 	{
 		if (replica.MissingSequenceCount > 0)
 			return ConsoleColor.Red;
@@ -301,7 +301,7 @@ public class RightPane(ConsoleManager consoleManager)
 		return ConsoleColor.Green;
 	}
 
-	private string GetStatusIcon(ConnectionStatus status) =>
+	private static string GetStatusIcon(ConnectionStatus status) =>
 		// Use ASCII characters that work reliably across all platforms
 		status switch
 		{
@@ -311,7 +311,7 @@ public class RightPane(ConsoleManager consoleManager)
 			_ => "-"
 		};
 
-	private ConsoleColor GetStatusColor(ConnectionStatus status) => status switch
+	private static ConsoleColor GetStatusColor(ConnectionStatus status) => status switch
 	{
 		ConnectionStatus.Connected => ConsoleColor.Green,
 		ConnectionStatus.Disconnected => ConsoleColor.Yellow,
@@ -319,7 +319,7 @@ public class RightPane(ConsoleManager consoleManager)
 		_ => ConsoleColor.Gray
 	};
 
-	private string GetStatusText(ConnectionStatus status) => status switch
+	private static string GetStatusText(ConnectionStatus status) => status switch
 	{
 		ConnectionStatus.Connected => "ONLINE",
 		ConnectionStatus.Disconnected => "OFFLINE",
@@ -327,7 +327,7 @@ public class RightPane(ConsoleManager consoleManager)
 		_ => "UNKNOWN"
 	};
 
-	private string GetLagDisplayText(ReplicaInfo replica)
+	private static string GetLagDisplayText(ReplicaInfo replica)
 	{
 		var parts = new List<string>();
 
@@ -392,7 +392,7 @@ public class RightPane(ConsoleManager consoleManager)
 		return (bar.ToString(), color);
 	}
 
-	private ConsoleColor GetLagColor(TimeSpan? timeLag)
+	private static ConsoleColor GetLagColor(TimeSpan? timeLag)
 	{
 		if (!timeLag.HasValue)
 			return ConsoleColor.Gray;

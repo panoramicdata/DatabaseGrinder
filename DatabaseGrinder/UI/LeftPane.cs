@@ -160,7 +160,7 @@ public class LeftPane
 	/// <param name="text">Text to truncate</param>
 	/// <param name="maxWidth">Maximum width allowed</param>
 	/// <returns>Truncated text</returns>
-	private string TruncateText(string text, int maxWidth)
+	private static string TruncateText(string text, int maxWidth)
 	{
 		if (string.IsNullOrEmpty(text) || maxWidth <= 0)
 			return string.Empty;
