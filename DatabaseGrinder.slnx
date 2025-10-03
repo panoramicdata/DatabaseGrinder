@@ -2,5 +2,12 @@
   <Folder Name="/Documentation/">
     <File Path="Documentation/Documentation.md" />
   </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+    <File Path="LICENSE" />
+    <File Path="README.md" />
+    <File Path="version.json" />
+  </Folder>
   <Project Path="src\DatabaseGrinder\DatabaseGrinder.csproj" />
 </Solution>

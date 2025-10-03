@@ -6,462 +6,744 @@ namespace DatabaseGrinder.Services;
 /// <summary>
 /// Represents a single character cell in the console buffer
 /// </summary>
-public struct ConsoleCell
+public struct ConsoleCell(char character, ConsoleColor foreground = ConsoleColor.Gray, ConsoleColor background = ConsoleColor.Black)
 {
-    public char Character { get; set; }
-    public ConsoleColor Foreground { get; set; }
-    public ConsoleColor Background { get; set; }
+	public char Character { get; set; } = character;
+	public ConsoleColor Foreground { get; set; } = foreground;
+	public ConsoleColor Background { get; set; } = background;
 
-    public ConsoleCell(char character, ConsoleColor foreground = ConsoleColor.Gray, ConsoleColor background = ConsoleColor.Black)
-    {
-        Character = character;
-        Foreground = foreground;
-        Background = background;
-    }
+	public bool Equals(ConsoleCell other)
+	{
+		return Character == other.Character &&
+			   Foreground == other.Foreground &&
+			   Background == other.Background;
+	}
+}
 
-    public bool Equals(ConsoleCell other)
-    {
-        return Character == other.Character && 
-               Foreground == other.Foreground && 
-               Background == other.Background;
-    }
+/// <summary>
+/// Line drawing character sets for different terminal capabilities
+/// </summary>
+public static class LineChars
+{
+	// Unicode box drawing characters (preferred)
+	public static class Unicode
+	{
+		public const char VerticalLine = '│';       // ┃ for thick
+		public const char HorizontalLine = '─';     // ━ for thick  
+		public const char TopLeft = '┌';
+		public const char TopRight = '┐';
+		public const char BottomLeft = '└';
+		public const char BottomRight = '┘';
+		public const char Cross = '┼';
+		public const char TeeDown = '┬';
+		public const char TeeUp = '┴';
+		public const char TeeRight = '├';
+		public const char TeeLeft = '┤';
+	}
+
+	// Extended ASCII/CP437 characters (fallback)
+	public static class ExtendedAscii
+	{
+		public const char VerticalLine = '│';       // 179
+		public const char HorizontalLine = '─';     // 196
+		public const char TopLeft = '┌';           // 218
+		public const char TopRight = '┐';          // 191
+		public const char BottomLeft = '└';        // 192
+		public const char BottomRight = '┘';       // 217
+		public const char Cross = '┼';             // 197
+		public const char TeeDown = '┬';           // 194
+		public const char TeeUp = '┴';             // 193
+		public const char TeeRight = '├';          // 195
+		public const char TeeLeft = '┤';           // 180
+	}
+
+	// Basic ASCII (ultimate fallback)
+	public static class Ascii
+	{
+		public const char VerticalLine = '|';
+		public const char HorizontalLine = '-';
+		public const char TopLeft = '+';
+		public const char TopRight = '+';
+		public const char BottomLeft = '+';
+		public const char BottomRight = '+';
+		public const char Cross = '+';
+		public const char TeeDown = '+';
+		public const char TeeUp = '+';
+		public const char TeeRight = '+';
+		public const char TeeLeft = '+';
+	}
 }
 
 /// <summary>
 /// Manages console display with differential updates for improved performance
 /// </summary>
-public class ConsoleManager
+/// <remarks>
+/// Initializes a new instance of ConsoleManager
+/// </remarks>
+/// <param name="minWidth">Minimum console width to support</param>
+/// <param name="minHeight">Minimum console height to support</param>
+public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 {
-    private readonly object _lockObject = new object();
-    private int _currentWidth;
-    private int _currentHeight;
-    private bool _isInitialized;
-    private ConsoleCell[,] _currentBuffer;
-    private ConsoleCell[,] _previousBuffer;
-    private bool _needsFullRedraw;
-    
-    // Performance optimization: reuse StringBuilder for clearing lines
-    private readonly StringBuilder _clearLineBuilder = new StringBuilder();
-    
-    // Performance tracking
-    private int _totalRenderCalls = 0;
-    private int _totalCellsChanged = 0;
+	private readonly object _lockObject = new object();
+	private int _currentWidth;
+	private int _currentHeight;
+	private bool _isInitialized;
+	private ConsoleCell[,] _currentBuffer = new ConsoleCell[0, 0];
+	private ConsoleCell[,] _previousBuffer = new ConsoleCell[0, 0];
+	private bool _needsFullRedraw;
+	private bool _supportsUnicode = true;
+	private bool _supportsExtendedAscii = true;
 
-    /// <summary>
-    /// Minimum supported console width
-    /// </summary>
-    public int MinWidth { get; }
+	// Performance optimization: reuse StringBuilder for clearing lines
+	private readonly StringBuilder _clearLineBuilder = new StringBuilder();
 
-    /// <summary>
-    /// Minimum supported console height
-    /// </summary>
-    public int MinHeight { get; }
+	// Performance tracking
+	private int _totalRenderCalls = 0;
+	private int _totalCellsChanged = 0;
 
-    /// <summary>
-    /// Current console width
-    /// </summary>
-    public int Width => _currentWidth;
+	/// <summary>
+	/// Minimum supported console width
+	/// </summary>
+	public int MinWidth { get; } = minWidth;
 
-    /// <summary>
-    /// Current console height
-    /// </summary>
-    public int Height => _currentHeight;
+	/// <summary>
+	/// Minimum supported console height
+	/// </summary>
+	public int MinHeight { get; } = minHeight;
 
-    /// <summary>
-    /// Gets the width of the left pane (half of console minus separator)
-    /// </summary>
-    public int LeftPaneWidth => (_currentWidth / 2) - 1;
+	/// <summary>
+	/// Current console width
+	/// </summary>
+	public int Width => _currentWidth;
 
-    /// <summary>
-    /// Gets the width of the right pane (half of console minus separator)
-    /// </summary>
-    public int RightPaneWidth => (_currentWidth / 2) - 1;
+	/// <summary>
+	/// Current console height
+	/// </summary>
+	public int Height => _currentHeight;
 
-    /// <summary>
-    /// Event raised when console size changes
-    /// </summary>
-    public event Action<int, int>? SizeChanged;
+	/// <summary>
+	/// Height of the branding area at the top (1 row for compact branding)
+	/// </summary>
+	public int BrandingHeight => 1;
 
-    /// <summary>
-    /// Initializes a new instance of ConsoleManager
-    /// </summary>
-    /// <param name="minWidth">Minimum console width to support</param>
-    /// <param name="minHeight">Minimum console height to support</param>
-    public ConsoleManager(int minWidth = 20, int minHeight = 20)
-    {
-        MinWidth = minWidth;
-        MinHeight = minHeight;
-        _currentBuffer = new ConsoleCell[0, 0];
-        _previousBuffer = new ConsoleCell[0, 0];
-    }
+	/// <summary>
+	/// Available height for content (excluding branding area)
+	/// </summary>
+	public int ContentHeight => Math.Max(0, _currentHeight - BrandingHeight);
 
-    /// <summary>
-    /// Initialize the console and start monitoring for size changes
-    /// </summary>
-    public void Initialize()
-    {
-        lock (_lockObject)
-        {
-            if (_isInitialized)
-                return;
+	/// <summary>
+	/// Y position where content starts (after branding area)
+	/// </summary>
+	public int ContentStartY => BrandingHeight;
 
-            // Set up console
-            Console.Clear();
-            Console.CursorVisible = false;
-            
-            // Get initial size
-            UpdateSize();
+	/// <summary>
+	/// X position of the vertical separator
+	/// </summary>
+	public int SeparatorX => _currentWidth / 2;
 
-            // Validate minimum size
-            if (_currentWidth < MinWidth || _currentHeight < MinHeight)
-            {
-                throw new InvalidOperationException(
-                    $"Console too small. Minimum size: {MinWidth}x{MinHeight}, Current: {_currentWidth}x{_currentHeight}");
-            }
+	/// <summary>
+	/// Gets the width of the left pane (excluding the separator)
+	/// Left pane uses columns 0 to SeparatorX-1
+	/// </summary>
+	public int LeftPaneWidth => Math.Max(0, SeparatorX);
 
-            // Initialize buffers
-            InitializeBuffers();
-            _needsFullRedraw = true;
+	/// <summary>
+	/// Gets the starting X position of the right pane
+	/// Right pane starts after the separator
+	/// </summary>
+	public int RightPaneStartX => SeparatorX + 1;
 
-            _isInitialized = true;
-        }
-    }
+	/// <summary>
+	/// Gets the width of the right pane (excluding the separator)
+	/// Right pane uses columns SeparatorX+1 to Width-1
+	/// </summary>
+	public int RightPaneWidth => Math.Max(0, _currentWidth - RightPaneStartX);
 
-    /// <summary>
-    /// Check for console size changes and update if needed
-    /// </summary>
-    public bool CheckForSizeChange()
-    {
-        lock (_lockObject)
-        {
-            var newWidth = Console.WindowWidth;
-            var newHeight = Console.WindowHeight;
+	/// <summary>
+	/// Event raised when console size changes
+	/// </summary>
+	public event Action<int, int>? SizeChanged;
 
-            if (newWidth != _currentWidth || newHeight != _currentHeight)
-            {
-                var oldWidth = _currentWidth;
-                var oldHeight = _currentHeight;
+	/// <summary>
+	/// Get the appropriate vertical line character for the current terminal
+	/// </summary>
+	public char VerticalLineChar => _supportsUnicode ? LineChars.Unicode.VerticalLine : 
+	                               _supportsExtendedAscii ? LineChars.ExtendedAscii.VerticalLine : 
+	                               LineChars.Ascii.VerticalLine;
 
-                _currentWidth = newWidth;
-                _currentHeight = newHeight;
+	/// <summary>
+	/// Get the appropriate horizontal line character for the current terminal
+	/// </summary>
+	public char HorizontalLineChar => _supportsUnicode ? LineChars.Unicode.HorizontalLine : 
+	                                 _supportsExtendedAscii ? LineChars.ExtendedAscii.HorizontalLine : 
+	                                 LineChars.Ascii.HorizontalLine;
 
-                // Validate minimum size
-                if (_currentWidth < MinWidth || _currentHeight < MinHeight)
-                {
-                    throw new InvalidOperationException(
-                        $"Console too small. Minimum size: {MinWidth}x{MinHeight}, Current: {_currentWidth}x{_currentHeight}");
-                }
+	/// <summary>
+	/// Get detailed layout information for debugging
+	/// </summary>
+	/// <returns>Layout information string</returns>
+	public string GetLayoutInfo()
+	{
+		return $"Console: {_currentWidth}x{_currentHeight}, " +
+		       $"Content: {_currentWidth}x{ContentHeight} (starts at Y:{ContentStartY}), " +
+		       $"Left: 0-{LeftPaneWidth - 1} ({LeftPaneWidth} chars), " +
+		       $"Sep: {SeparatorX}, " +
+		       $"Right: {RightPaneStartX}-{_currentWidth - 1} ({RightPaneWidth} chars)";
+	}
 
-                // Reinitialize buffers for new size
-                InitializeBuffers();
-                _needsFullRedraw = true;
+	/// <summary>
+	/// Initialize the console and start monitoring for size changes
+	/// </summary>
+	public void Initialize()
+	{
+		lock (_lockObject)
+		{
+			if (_isInitialized)
+				return;
 
-                SizeChanged?.Invoke(_currentWidth, _currentHeight);
-                return true;
-            }
+			// Set up console
+			Console.Clear();
+			Console.CursorVisible = false;
 
-            return false;
-        }
-    }
+			// Get initial size
+			UpdateSize();
 
-    /// <summary>
-    /// Clear the current buffer (will be applied on next render)
-    /// </summary>
-    public void Clear()
-    {
-        lock (_lockObject)
-        {
-            var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
-            
-            for (int y = 0; y < _currentHeight; y++)
-            {
-                for (int x = 0; x < _currentWidth; x++)
-                {
-                    _currentBuffer[x, y] = emptyCell;
-                }
-            }
-        }
-    }
+			// Test Unicode support
+			DetectTerminalCapabilities();
 
-    /// <summary>
-    /// Set text at a specific position in the buffer (will be applied on next render)
-    /// </summary>
-    /// <param name="x">X coordinate</param>
-    /// <param name="y">Y coordinate</param>
-    /// <param name="text">Text to write</param>
-    /// <param name="foreground">Foreground color (optional)</param>
-    /// <param name="background">Background color (optional)</param>
-    public void WriteAt(int x, int y, string text, ConsoleColor? foreground = null, ConsoleColor? background = null)
-    {
-        lock (_lockObject)
-        {
-            if (x >= 0 && y >= 0 && y < _currentHeight && !string.IsNullOrEmpty(text))
-            {
-                var fg = foreground ?? ConsoleColor.Gray;
-                var bg = background ?? ConsoleColor.Black;
+			// Validate minimum size
+			if (_currentWidth < MinWidth || _currentHeight < MinHeight)
+			{
+				throw new InvalidOperationException(
+					$"Console too small. Minimum size: {MinWidth}x{MinHeight}, Current: {_currentWidth}x{_currentHeight}");
+			}
 
-                var maxLength = Math.Min(text.Length, _currentWidth - x);
-                for (int i = 0; i < maxLength; i++)
-                {
-                    _currentBuffer[x + i, y] = new ConsoleCell(text[i], fg, bg);
-                }
-            }
-        }
-    }
+			// Validate layout makes sense
+			if (LeftPaneWidth + RightPaneWidth + 1 != _currentWidth) // +1 for separator
+			{
+				throw new InvalidOperationException(
+					$"Layout calculation error: Left({LeftPaneWidth}) + Sep(1) + Right({RightPaneWidth}) != Total({_currentWidth})");
+			}
 
-    /// <summary>
-    /// Set a single character at a specific position in the buffer
-    /// </summary>
-    /// <param name="x">X coordinate</param>
-    /// <param name="y">Y coordinate</param>
-    /// <param name="character">Character to write</param>
-    /// <param name="foreground">Foreground color (optional)</param>
-    /// <param name="background">Background color (optional)</param>
-    public void WriteCharAt(int x, int y, char character, ConsoleColor? foreground = null, ConsoleColor? background = null)
-    {
-        lock (_lockObject)
-        {
-            if (x >= 0 && y >= 0 && x < _currentWidth && y < _currentHeight)
-            {
-                var fg = foreground ?? ConsoleColor.Gray;
-                var bg = background ?? ConsoleColor.Black;
-                _currentBuffer[x, y] = new ConsoleCell(character, fg, bg);
-            }
-        }
-    }
+			// Initialize buffers
+			InitializeBuffers();
+			_needsFullRedraw = true;
 
-    /// <summary>
-    /// Draw a vertical separator between left and right panes in the buffer
-    /// </summary>
-    public void DrawVerticalSeparator()
-    {
-        lock (_lockObject)
-        {
-            var separatorX = _currentWidth / 2;
-            for (int y = 0; y < _currentHeight; y++)
-            {
-                WriteCharAt(separatorX, y, '│', ConsoleColor.DarkGray);
-            }
-        }
-    }
+			_isInitialized = true;
+		}
+	}
 
-    /// <summary>
-    /// Render the current buffer to the console, only updating changed cells
-    /// </summary>
-    public void Render()
-    {
-        lock (_lockObject)
-        {
-            if (!_isInitialized)
-                return;
+	/// <summary>
+	/// Detect what line drawing capabilities the terminal supports
+	/// </summary>
+	private void DetectTerminalCapabilities()
+	{
+		try
+		{
+			// Try to detect terminal type
+			var term = Environment.GetEnvironmentVariable("TERM");
+			var termProgram = Environment.GetEnvironmentVariable("TERM_PROGRAM");
 
-            _totalRenderCalls++;
-            var changedCells = 0;
-            var originalForeground = Console.ForegroundColor;
-            var originalBackground = Console.BackgroundColor;
-            
-            try
-            {
-                // If we need a full redraw, clear the screen first
-                if (_needsFullRedraw)
-                {
-                    Console.Clear();
-                    _needsFullRedraw = false;
-                }
+			// Windows Terminal, modern terminals generally support Unicode
+			if (termProgram == "vscode" || termProgram == "Windows Terminal" || 
+			    term?.Contains("xterm") == true || term?.Contains("screen") == true)
+			{
+				_supportsUnicode = true;
+				_supportsExtendedAscii = true;
+			}
+			// Basic Windows Command Prompt may have limited support
+			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				// Test if we can write Unicode characters
+				_supportsUnicode = TestUnicodeSupport();
+				_supportsExtendedAscii = true; // Most Windows consoles support extended ASCII
+			}
+			else
+			{
+				// Linux/Mac terminals generally support Unicode
+				_supportsUnicode = true;
+				_supportsExtendedAscii = true;
+			}
+		}
+		catch
+		{
+			// Fallback to basic ASCII if detection fails
+			_supportsUnicode = false;
+			_supportsExtendedAscii = false;
+		}
+	}
 
-                // Track current colors to minimize color change calls
-                var currentForeground = originalForeground;
-                var currentBackground = originalBackground;
+	/// <summary>
+	/// Test if the terminal supports Unicode line drawing characters
+	/// </summary>
+	private bool TestUnicodeSupport()
+	{
+		try
+		{
+			// Simple test - try to use Unicode and see if it causes issues
+			Console.OutputEncoding = System.Text.Encoding.UTF8;
+			return true;
+		}
+		catch
+		{
+			return false;
+		}
+	}
 
-                // Optimize: batch consecutive character writes where possible
-                for (int y = 0; y < _currentHeight; y++)
-                {
-                    var lineHasChanges = false;
-                    var batchStart = -1;
-                    var batchLength = 0;
-                    var batchForeground = ConsoleColor.Gray;
-                    var batchBackground = ConsoleColor.Black;
-                    _clearLineBuilder.Clear();
+	/// <summary>
+	/// Draw the permanent branding area at the top
+	/// </summary>
+	public void DrawBrandingArea()
+	{
+		lock (_lockObject)
+		{
+			// Clear the branding area
+			for (int brandX = 0; brandX < _currentWidth; brandX++)
+			{
+				_currentBuffer[brandX, 0] = new ConsoleCell(' ', ConsoleColor.White, ConsoleColor.Black);
+			}
 
-                    // First pass: check if this line has any changes and build batch
-                    for (int x = 0; x < _currentWidth; x++)
-                    {
-                        var currentCell = _currentBuffer[x, y];
-                        var previousCell = _previousBuffer[x, y];
+			// Create branding text with logo
+			var brandText = GetBrandingText();
+			
+			// Draw branding with orange background for the logo part
+			var brandingX = 0;
+			for (int i = 0; i < brandText.Length && brandingX < _currentWidth; i++)
+			{
+				var ch = brandText[i];
+				var fg = ConsoleColor.White;
+				var bg = ConsoleColor.DarkYellow; // Orange-ish background
+				
+				// After "panoramic data", use normal colors
+				if (i >= GetLogoLength())
+				{
+					fg = ConsoleColor.Gray;
+					bg = ConsoleColor.Black;
+				}
 
-                        if (!currentCell.Equals(previousCell))
-                        {
-                            if (!lineHasChanges)
-                            {
-                                lineHasChanges = true;
-                                batchStart = x;
-                                batchForeground = currentCell.Foreground;
-                                batchBackground = currentCell.Background;
-                            }
+				_currentBuffer[brandingX, 0] = new ConsoleCell(ch, fg, bg);
+				brandingX++;
+			}
 
-                            // Check if we can continue the batch (same colors)
-                            if (x == batchStart + batchLength && 
-                                currentCell.Foreground == batchForeground && 
-                                currentCell.Background == batchBackground)
-                            {
-                                _clearLineBuilder.Append(currentCell.Character);
-                                batchLength++;
-                            }
-                            else
-                            {
-                                // Write the current batch if we have one
-                                if (batchLength > 0)
-                                {
-                                    WriteBatch(batchStart, y, _clearLineBuilder.ToString(), 
-                                             batchForeground, batchBackground,
-                                             ref currentForeground, ref currentBackground);
-                                    changedCells += batchLength;
-                                }
+			// Add keyboard shortcuts on the right side if there's space
+			var shortcuts = " [q=quit r=refresh h=help]";
+			var shortcutsStartX = _currentWidth - shortcuts.Length;
+			if (shortcutsStartX > brandingX + 2) // Leave at least 2 spaces gap
+			{
+				for (int i = 0; i < shortcuts.Length && shortcutsStartX + i < _currentWidth; i++)
+				{
+					_currentBuffer[shortcutsStartX + i, 0] = new ConsoleCell(shortcuts[i], ConsoleColor.DarkGray, ConsoleColor.Black);
+				}
+			}
 
-                                // Start new batch
-                                batchStart = x;
-                                batchLength = 1;
-                                batchForeground = currentCell.Foreground;
-                                batchBackground = currentCell.Background;
-                                _clearLineBuilder.Clear();
-                                _clearLineBuilder.Append(currentCell.Character);
-                            }
+			// Draw a separator line below branding if there's space
+			if (_currentHeight > 1)
+			{
+				for (int sepX = 0; sepX < _currentWidth; sepX++)
+				{
+					_currentBuffer[sepX, ContentStartY - 1] = new ConsoleCell(HorizontalLineChar, ConsoleColor.DarkGray, ConsoleColor.Black);
+				}
+			}
+		}
+	}
 
-                            // Update previous buffer
-                            _previousBuffer[x, y] = currentCell;
-                        }
-                        else if (batchLength > 0)
-                        {
-                            // End of batch due to unchanged cell
-                            WriteBatch(batchStart, y, _clearLineBuilder.ToString(),
-                                     batchForeground, batchBackground,
-                                     ref currentForeground, ref currentBackground);
-                            changedCells += batchLength;
-                            batchLength = 0;
-                            _clearLineBuilder.Clear();
-                        }
-                    }
+	/// <summary>
+	/// Get the branding text with appropriate logo character
+	/// </summary>
+	private string GetBrandingText()
+	{
+		const string nkoChar = "ߝ"; // Unicode Nko letter FA
+		
+		if (_supportsUnicode)
+		{
+			// Try Unicode logo first
+			try
+			{
+				return $"{nkoChar} panoramic data  DatabaseGrinder v1.1.0";
+			}
+			catch
+			{
+				// Fallback if Unicode char fails
+			}
+		}
+		
+		// Fallback without logo character
+		return "panoramic data  DatabaseGrinder v1.1.0";
+	}
 
-                    // Write final batch if exists
-                    if (batchLength > 0)
-                    {
-                        WriteBatch(batchStart, y, _clearLineBuilder.ToString(),
-                                 batchForeground, batchBackground,
-                                 ref currentForeground, ref currentBackground);
-                        changedCells += batchLength;
-                    }
-                }
+	/// <summary>
+	/// Get the length of the logo portion (for background coloring)
+	/// </summary>
+	private int GetLogoLength()
+	{
+		return _supportsUnicode ? "ߝ panoramic data".Length : "panoramic data".Length;
+	}
 
-                _totalCellsChanged += changedCells;
-            }
-            finally
-            {
-                Console.ForegroundColor = originalForeground;
-                Console.BackgroundColor = originalBackground;
-            }
+	/// <summary>
+	/// Check for console size changes and update if needed
+	/// </summary>
+	public bool CheckForSizeChange()
+	{
+		lock (_lockObject)
+		{
+			var newWidth = Console.WindowWidth;
+			var newHeight = Console.WindowHeight;
 
-            // Optional: Log performance metrics periodically
-            #if DEBUG
-            if (_totalRenderCalls % 50 == 0 && _totalRenderCalls > 0)
-            {
-                var totalCells = _currentWidth * _currentHeight;
-                var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
-                var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
-                System.Diagnostics.Debug.WriteLine($"Render performance: Avg {avgCellsPerRender:F1} cells/render ({avgPercentage:F1}%) over {_totalRenderCalls} renders");
-            }
-            #endif
-        }
-    }
+			if (newWidth != _currentWidth || newHeight != _currentHeight)
+			{
+				var oldWidth = _currentWidth;
+				var oldHeight = _currentHeight;
 
-    /// <summary>
-    /// Force a full redraw on the next render
-    /// </summary>
-    public void ForceFullRedraw()
-    {
-        lock (_lockObject)
-        {
-            _needsFullRedraw = true;
-            // Clear previous buffer to force all cells to be considered changed
-            for (int y = 0; y < _currentHeight; y++)
-            {
-                for (int x = 0; x < _currentWidth; x++)
-                {
-                    _previousBuffer[x, y] = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
-                }
-            }
-        }
-    }
+				_currentWidth = newWidth;
+				_currentHeight = newHeight;
 
-    /// <summary>
-    /// Get performance statistics for debugging
-    /// </summary>
-    public string GetPerformanceStats()
-    {
-        lock (_lockObject)
-        {
-            if (_totalRenderCalls == 0) return "No renders yet";
-            
-            var totalCells = _currentWidth * _currentHeight;
-            var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
-            var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
-            
-            return $"Renders: {_totalRenderCalls}, Avg cells/render: {avgCellsPerRender:F1} ({avgPercentage:F1}%)";
-        }
-    }
+				// Validate minimum size
+				if (_currentWidth < MinWidth || _currentHeight < MinHeight)
+				{
+					throw new InvalidOperationException(
+						$"Console too small. Minimum size: {MinWidth}x{MinHeight}, Current: {_currentWidth}x{_currentHeight}");
+				}
 
-    /// <summary>
-    /// Get platform-specific information for debugging
-    /// </summary>
-    /// <returns>Platform information string</returns>
-    public string GetPlatformInfo()
-    {
-        var os = RuntimeInformation.OSDescription;
-        var arch = RuntimeInformation.OSArchitecture;
-        return $"{os} ({arch})";
-    }
+				// Reinitialize buffers for new size
+				InitializeBuffers();
+				_needsFullRedraw = true;
 
-    private void WriteBatch(int x, int y, string text, ConsoleColor foreground, ConsoleColor background,
-                           ref ConsoleColor currentForeground, ref ConsoleColor currentBackground)
-    {
-        Console.SetCursorPosition(x, y);
-        
-        if (foreground != currentForeground)
-        {
-            Console.ForegroundColor = foreground;
-            currentForeground = foreground;
-        }
-        
-        if (background != currentBackground)
-        {
-            Console.BackgroundColor = background;
-            currentBackground = background;
-        }
-        
-        Console.Write(text);
-    }
+				SizeChanged?.Invoke(_currentWidth, _currentHeight);
+				return true;
+			}
 
-    private void UpdateSize()
-    {
-        _currentWidth = Console.WindowWidth;
-        _currentHeight = Console.WindowHeight;
-    }
+			return false;
+		}
+	}
 
-    private void InitializeBuffers()
-    {
-        _currentBuffer = new ConsoleCell[_currentWidth, _currentHeight];
-        _previousBuffer = new ConsoleCell[_currentWidth, _currentHeight];
+	/// <summary>
+	/// Clear the current buffer (will be applied on next render)
+	/// </summary>
+	public void Clear()
+	{
+		lock (_lockObject)
+		{
+			var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
 
-        var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
-        var invalidCell = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
+			for (int y = 0; y < _currentHeight; y++)
+			{
+				for (int x = 0; x < _currentWidth; x++)
+				{
+					_currentBuffer[x, y] = emptyCell;
+				}
+			}
+		}
+	}
 
-        // Initialize with empty cells
-        for (int y = 0; y < _currentHeight; y++)
-        {
-            for (int x = 0; x < _currentWidth; x++)
-            {
-                _currentBuffer[x, y] = emptyCell;
-                _previousBuffer[x, y] = invalidCell; // Force initial draw
-            }
-        }
-    }
+	/// <summary>
+	/// Set text at a specific position in the buffer (will be applied on next render)
+	/// </summary>
+	/// <param name="x">X coordinate</param>
+	/// <param name="y">Y coordinate</param>
+	/// <param name="text">Text to write</param>
+	/// <param name="foreground">Foreground color (optional)</param>
+	/// <param name="background">Background color (optional)</param>
+	public void WriteAt(int x, int y, string text, ConsoleColor? foreground = null, ConsoleColor? background = null)
+	{
+		lock (_lockObject)
+		{
+			if (x >= 0 && y >= 0 && y < _currentHeight && !string.IsNullOrEmpty(text))
+			{
+				var fg = foreground ?? ConsoleColor.Gray;
+				var bg = background ?? ConsoleColor.Black;
+
+				// Ensure we don't write beyond console boundaries
+				var maxLength = Math.Min(text.Length, _currentWidth - x);
+				for (int i = 0; i < maxLength; i++)
+				{
+					if (x + i < _currentWidth) // Double-check boundary
+					{
+						_currentBuffer[x + i, y] = new ConsoleCell(text[i], fg, bg);
+					}
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Set a single character at a specific position in the buffer
+	/// </summary>
+	/// <param name="x">X coordinate</param>
+	/// <param name="y">Y coordinate</param>
+	/// <param name="character">Character to write</param>
+	/// <param name="foreground">Foreground color (optional)</param>
+	/// <param name="background">Background color (optional)</param>
+	public void WriteCharAt(int x, int y, char character, ConsoleColor? foreground = null, ConsoleColor? background = null)
+	{
+		lock (_lockObject)
+		{
+			if (x >= 0 && y >= 0 && x < _currentWidth && y < _currentHeight)
+			{
+				var fg = foreground ?? ConsoleColor.Gray;
+				var bg = background ?? ConsoleColor.Black;
+				_currentBuffer[x, y] = new ConsoleCell(character, fg, bg);
+			}
+		}
+	}
+
+	/// <summary>
+	/// Draw a vertical separator between left and right panes in the buffer
+	/// </summary>
+	public void DrawVerticalSeparator()
+	{
+		lock (_lockObject)
+		{
+			var separatorX = SeparatorX;
+			// Only draw separator if we have valid position, starting after branding area
+			if (separatorX > 0 && separatorX < _currentWidth)
+			{
+				for (int y = ContentStartY; y < _currentHeight; y++)
+				{
+					WriteCharAt(separatorX, y, VerticalLineChar, ConsoleColor.DarkGray);
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Render the current buffer to the console, only updating changed cells
+	/// </summary>
+	public void Render()
+	{
+		lock (_lockObject)
+		{
+			if (!_isInitialized)
+				return;
+
+			// Always draw branding area first
+			DrawBrandingArea();
+
+			_totalRenderCalls++;
+			var changedCells = 0;
+			var originalForeground = Console.ForegroundColor;
+			var originalBackground = Console.BackgroundColor;
+
+			try
+			{
+				// If we need a full redraw, clear the screen first
+				if (_needsFullRedraw)
+				{
+					Console.Clear();
+					_needsFullRedraw = false;
+				}
+
+				// Track current colors to minimize color change calls
+				var currentForeground = originalForeground;
+				var currentBackground = originalBackground;
+
+				// Optimize: batch consecutive character writes where possible
+				for (int y = 0; y < _currentHeight; y++)
+				{
+					var lineHasChanges = false;
+					var batchStart = -1;
+					var batchLength = 0;
+					var batchForeground = ConsoleColor.Gray;
+					var batchBackground = ConsoleColor.Black;
+					_clearLineBuilder.Clear();
+
+					// First pass: check if this line has any changes and build batch
+					for (int x = 0; x < _currentWidth; x++)
+					{
+						var currentCell = _currentBuffer[x, y];
+						var previousCell = _previousBuffer[x, y];
+
+						if (!currentCell.Equals(previousCell))
+						{
+							if (!lineHasChanges)
+							{
+								lineHasChanges = true;
+								batchStart = x;
+								batchForeground = currentCell.Foreground;
+								batchBackground = currentCell.Background;
+							}
+
+							// Check if we can continue the batch (same colors)
+							if (x == batchStart + batchLength &&
+								currentCell.Foreground == batchForeground &&
+								currentCell.Background == batchBackground)
+							{
+								_clearLineBuilder.Append(currentCell.Character);
+								batchLength++;
+							}
+							else
+							{
+								// Write the current batch if we have one
+								if (batchLength > 0)
+								{
+									WriteBatch(batchStart, y, _clearLineBuilder.ToString(),
+											 batchForeground, batchBackground,
+											 ref currentForeground, ref currentBackground);
+									changedCells += batchLength;
+								}
+
+								// Start new batch
+								batchStart = x;
+								batchLength = 1;
+								batchForeground = currentCell.Foreground;
+								batchBackground = currentCell.Background;
+								_clearLineBuilder.Clear();
+								_clearLineBuilder.Append(currentCell.Character);
+							}
+
+							// Update previous buffer
+							_previousBuffer[x, y] = currentCell;
+						}
+						else if (batchLength > 0)
+						{
+							// End of batch due to unchanged cell
+							WriteBatch(batchStart, y, _clearLineBuilder.ToString(),
+									 batchForeground, batchBackground,
+									 ref currentForeground, ref currentBackground);
+							changedCells += batchLength;
+							batchLength = 0;
+							_clearLineBuilder.Clear();
+						}
+					}
+
+					// Write final batch if exists
+					if (batchLength > 0)
+					{
+						WriteBatch(batchStart, y, _clearLineBuilder.ToString(),
+								 batchForeground, batchBackground,
+								 ref currentForeground, ref currentBackground);
+						changedCells += batchLength;
+					}
+				}
+
+				_totalCellsChanged += changedCells;
+			}
+			finally
+			{
+				Console.ForegroundColor = originalForeground;
+				Console.BackgroundColor = originalBackground;
+			}
+
+			// Optional: Log performance metrics periodically
+#if DEBUG
+			if (_totalRenderCalls % 100 == 0 && _totalRenderCalls > 0)
+			{
+				var totalCells = _currentWidth * _currentHeight;
+				var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
+				var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
+				System.Diagnostics.Debug.WriteLine($"Render performance: Avg {avgCellsPerRender:F1} cells/render ({avgPercentage:F1}%) over {_totalRenderCalls} renders");
+			}
+#endif
+		}
+	}
+
+	/// <summary>
+	/// Force a full redraw on the next render
+	/// </summary>
+	public void ForceFullRedraw()
+	{
+		lock (_lockObject)
+		{
+			_needsFullRedraw = true;
+			// Clear previous buffer to force all cells to be considered changed
+			for (int y = 0; y < _currentHeight; y++)
+			{
+				for (int x = 0; x < _currentWidth; x++)
+				{
+					_previousBuffer[x, y] = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
+				}
+			}
+		}
+	}
+
+	/// <summary>
+	/// Get performance statistics for debugging
+	/// </summary>
+	public string GetPerformanceStats()
+	{
+		lock (_lockObject)
+		{
+			if (_totalRenderCalls == 0) return "No renders yet";
+
+			var totalCells = _currentWidth * _currentHeight;
+			var avgCellsPerRender = (double)_totalCellsChanged / _totalRenderCalls;
+			var avgPercentage = (avgCellsPerRender * 100.0) / totalCells;
+
+			return $"Renders: {_totalRenderCalls}, Avg cells/render: {avgCellsPerRender:F1} ({avgPercentage:F1}%)";
+		}
+	}
+
+	/// <summary>
+	/// Get platform-specific information for debugging
+	/// </summary>
+	/// <returns>Platform information string</returns>
+	public string GetPlatformInfo()
+	{
+		var os = RuntimeInformation.OSDescription;
+		var arch = RuntimeInformation.OSArchitecture;
+		var unicode = _supportsUnicode ? "Unicode" : "ASCII";
+		return $"{os} ({arch}) - {unicode} support";
+	}
+
+	private void WriteBatch(int x, int y, string text, ConsoleColor foreground, ConsoleColor background,
+						   ref ConsoleColor currentForeground, ref ConsoleColor currentBackground)
+	{
+		try
+		{
+			// Ensure we don't write beyond console boundaries
+			if (x >= 0 && y >= 0 && x < _currentWidth && y < _currentHeight)
+			{
+				Console.SetCursorPosition(x, y);
+
+				if (foreground != currentForeground)
+				{
+					Console.ForegroundColor = foreground;
+					currentForeground = foreground;
+				}
+
+				if (background != currentBackground)
+				{
+					Console.BackgroundColor = background;
+					currentBackground = background;
+				}
+
+				// Truncate text if it would exceed console width
+				var maxLength = _currentWidth - x;
+				if (text.Length > maxLength)
+				{
+					text = text.Substring(0, maxLength);
+				}
+
+				Console.Write(text);
+			}
+		}
+		catch (ArgumentOutOfRangeException)
+		{
+			// Ignore cursor positioning errors - console may have been resized
+		}
+	}
+
+	private void UpdateSize()
+	{
+		_currentWidth = Console.WindowWidth;
+		_currentHeight = Console.WindowHeight;
+	}
+
+	private void InitializeBuffers()
+	{
+		_currentBuffer = new ConsoleCell[_currentWidth, _currentHeight];
+		_previousBuffer = new ConsoleCell[_currentWidth, _currentHeight];
+
+		var emptyCell = new ConsoleCell(' ', ConsoleColor.Gray, ConsoleColor.Black);
+		var invalidCell = new ConsoleCell('\0', ConsoleColor.Black, ConsoleColor.Black);
+
+		// Initialize with empty cells
+		for (int y = 0; y < _currentHeight; y++)
+		{
+			for (int x = 0; x < _currentWidth; x++)
+			{
+				_currentBuffer[x, y] = emptyCell;
+				_previousBuffer[x, y] = invalidCell; // Force initial draw
+			}
+		}
+	}
 }

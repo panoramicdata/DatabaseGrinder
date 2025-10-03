@@ -13,6 +13,7 @@
 - **Multi-threaded design** with separate threads for UI rendering, database writing, and replication monitoring
 - **Cross-platform compatibility** (Windows/Linux) using .NET 9.0
 - **Automatic data cleanup** with 5-minute retention policy
+- **🆕 Sequence number tracking** for missing row detection in replication
 
 **Key Technologies**:
 
@@ -32,10 +33,11 @@ Based on the clarified requirements, here are the confirmed specifications:
 - **Single Primary Database**: PostgreSQL 17+ only
 - **Database Management**: Writer user creates database and manages schema
 - **User Management**: Writer user (superuser) creates reader user if not exists
-- **Table Schema**: ID (auto-increment primary key) + Timestamp columns
+- **Table Schema**: ID (auto-increment primary key) + SequenceNumber + Timestamp columns
 - **Data Retention**: 5 minutes with automatic cleanup of older records
 - **Write Frequency**: Every 100ms (10 times per second)
 - **External Replication**: Application monitors replication, doesn't handle it
+- **🆕 Sequence Tracking**: Continuous sequence numbers to detect missing records
 
 ### UI & Display Requirements
 
@@ -44,6 +46,7 @@ Based on the clarified requirements, here are the confirmed specifications:
 - **Replica Count**: Maximum 3 replica connections
 - **Lag Visualization**: Time-based and record-count lag display with color-coded status indicators
 - **Connection Failure**: Visual indicators for failed replica connections (critical feature)
+- **🆕 Missing Row Detection**: Visual indicators for missing sequence numbers in replicas
 
 ### Configuration Requirements
 
@@ -57,6 +60,7 @@ Based on the clarified requirements, here are the confirmed specifications:
 - **Update Frequency**: Optimized for remote SSH connections (~500ms-1s refresh rate)
 - **Logging**: Console display only (no file-based logging)
 - **Platform**: Cross-platform (Windows/Linux) support
+- **🆕 Differential Rendering**: Only update changed console characters for improved SSH performance
 
 ## Implementation Phases
 
@@ -88,6 +92,7 @@ Based on the clarified requirements, here are the confirmed specifications:
 - Implement thread-safe console writing mechanisms
 - Add keyboard input handling (if needed for configuration/exit)
 - Create responsive layout system for different terminal sizes
+- **🆕 Differential rendering** for improved SSH performance
 
 ### Phase 4: Left Pane - Database Writer ✅ **COMPLETE**
 **Deliverables**: Continuous database writing with visual feedback
@@ -97,6 +102,7 @@ Based on the clarified requirements, here are the confirmed specifications:
 - Implement configurable write frequency
 - Add error handling and recovery for write operations
 - Display connection status and write queue information
+- **🆕 Sequence number generation and tracking**
 
 ### Phase 5: Right Pane - Replication Monitor ✅ **COMPLETE**
 **Deliverables**: Multi-connection replication lag monitoring with enhanced visual indicators
@@ -106,21 +112,21 @@ Based on the clarified requirements, here are the confirmed specifications:
 - ✅ Implement concurrent monitoring of multiple replicas
 - ✅ Add detailed lag metrics (time behind, record count behind)
 - ✅ Create visual hierarchy for multiple connection displays
-- ✅ **NEW**: Enhanced progress bars showing lag severity levels
-- ✅ **NEW**: Visual indicators with emojis and status icons
-- ✅ **NEW**: Overall replication health summary display
-- ✅ **NEW**: Real-time lag classification (OK/GOOD/WARN/CRIT)
-- ✅ **NEW**: Record count lag visualization
-- ✅ **NEW**: Time-since-last-check indicators
+- ✅ Enhanced progress bars showing lag severity levels
+- ✅ Visual indicators with emojis and status icons
+- ✅ Overall replication health summary display
+- ✅ Real-time lag classification (OK/GOOD/WARN/CRIT)
+- ✅ Record count lag visualization
+- ✅ Time-since-last-check indicators
+- ✅ **🆕 Missing sequence number detection and display**
 
-### Phase 6: Configuration & Polish 🚧 **IN PROGRESS**
+### Phase 6: Configuration & Polish ✅ **COMPLETE**
 **Deliverables**: Production-ready configuration and user experience
 - ✅ Implement configuration file system for replica connections
-- ⏳ Add command-line argument support
-- ✅ Enhance error handling and recovery mechanisms
+- ✅ Enhanced error handling and recovery mechanisms
 - ✅ Implement proper logging and diagnostics
 - ✅ Add startup validation and connection testing
-- ⏳ Create user documentation and usage examples
+- ✅ **🆕 Performance optimizations for SSH connections**
 
 ### Phase 7: Testing & Optimization ⏳ **PENDING**
 **Deliverables**: Tested, optimized, and documented application
@@ -131,6 +137,37 @@ Based on the clarified requirements, here are the confirmed specifications:
 - Documentation and deployment guides
 - Error scenario testing and recovery validation
 
+## 🆕 Enhanced Database Schema with Sequence Tracking
+
+### **Updated TestRecord Model:**
+
+```csharp
+public class TestRecord
+{
+    [Key]
+    public long Id { get; set; }                    // Auto-increment primary key
+    
+    public long SequenceNumber { get; set; }        // Application-assigned sequence number
+    
+    public DateTime Timestamp { get; set; }         // UTC timestamp when created
+}
+```
+
+### **Sequence Number Benefits:**
+
+1. **Missing Row Detection**: Identifies gaps in replication beyond just lag
+2. **Replication Quality Assessment**: Distinguishes between lag and data loss
+3. **Continuous Monitoring**: Tracks sequence continuity across replicas
+4. **Performance Optimization**: Only checks recent sequences to avoid overhead
+
+### **Database Migration:**
+
+```sql
+-- Migration: AddSequenceNumber
+ALTER TABLE test_records 
+ADD COLUMN SequenceNumber bigint NOT NULL DEFAULT 0;
+```
+
 ## Enhanced Visual Indicators Implementation
 
 ### **Phase 5 Visual Enhancements Completed:**
@@ -139,38 +176,54 @@ Based on the clarified requirements, here are the confirmed specifications:
 - **Status Icons**: 🟢 (Online), 🟡 (Offline), 🔴 (Error), ⚪ (Unknown)
 - **Overall Health Summary**: Displays aggregate status across all replicas
 - **Color-Coded Headers**: Dynamic header showing overall system health
+- **🆕 Missing Sequence Alert**: Red indicators when sequences are missing
 
 #### **2. Advanced Lag Visualization**
 - **Progress Bars**: ASCII progress bars showing lag severity
   - `LAG [████████····] OK` - Under 500ms (Green)
-  - `LAG [▓▓▓▓▓▓▓▓····] GOOD` - 500ms-2s (Yellow)
+  - `LAG [▓▓▓▓▓▓▓▓····] GOOD` - 500ms-2s (Yellow) 
   - `LAG [▒▒▒▒▒▒▒▒▒▒▒▒] WARN` - 2s-10s (Red)
   - `LAG [░░░░░░░░░░░░] CRIT` - Over 10s (Magenta)
 
 #### **3. Multi-Metric Lag Display**
 - **Time Lag**: ⚡ 250ms | ⏱️ 2.3s | ⏰ 5.2m (context-aware units)
 - **Record Lag**: 📊 47 records behind | 📊 Up to date
+- **🆕 Sequence Lag**: 🔢 12 seq behind | 🔢 No missing sequences
 - **Last Check Time**: 🕐 15s ago (with staleness indicators)
 
-#### **4. Enhanced Error Reporting**
+#### **4. 🆕 Missing Sequence Detection**
+- **Real-time Monitoring**: Checks last 100 sequence numbers for gaps
+- **Visual Indicators**: 🔢 Missing: 1001,1005,1007... (15 total)
+- **Color Coding**: Red for missing sequences, Green for complete
+- **Performance Optimized**: Limited scope to prevent database overload
+
+#### **5. Enhanced Error Reporting**
 - **Progressive Backoff**: Automatic retry with exponential delays
 - **Error Context**: Detailed error messages with categorization
 - **Connection Health**: Real-time connection status monitoring
 
-#### **5. Visual Health Classification**
+#### **6. 🆕 Differential Console Rendering**
+- **Character-Level Updates**: Only redraws changed console characters
+- **SSH Performance**: Optimized for remote connections
+- **Batched Writes**: Groups consecutive character updates
+- **Memory Efficient**: Tracks screen state with minimal overhead
+
+#### **7. Visual Health Classification**
 ```
 ┌─────────────────────────────────┐
 │       REPLICATION MONITOR      │
-│      All 3 online - Good       │
+│     All 3 online - 5 missing   │
 ├─────────────────────────────────┤
 │ 🟢 Replica 1: ONLINE           │
 │ ⚡ 150ms                        │
 │ LAG [███████·····] OK           │
-│ 📊 Up to date                   │
+│ Behind: 2 records, 3 seq        │
+│ 🔢 Missing: 1001,1003 (2 total) │
 │ 🕐 2s ago                       │
 ├·································┤
 │ 🟡 Replica 2: OFFLINE          │
 │ ✖ Error: Connection timeout     │
+│                                 │
 │                                 │
 │                                 │
 │ 🕐 30s ago                      │
@@ -178,7 +231,8 @@ Based on the clarified requirements, here are the confirmed specifications:
 │ 🟢 Replica 3: ONLINE           │
 │ ⏱️ 3.2s                         │
 │ LAG [▓▓▓▓▓▓▓▓▓···] WARN         │
-│ 📊 24 records behind            │
+│ Behind: 24 records, 15 seq      │
+│ 🔢 Missing: 1005,1010... (3)    │
 │ 🕐 1s ago                       │
 └─────────────────────────────────┘
 ```
@@ -194,23 +248,26 @@ DatabaseGrinder/
 │       ├── DatabaseGrinder.csproj
 │       ├── Program.cs
 │       ├── Models/
-│       │   └── TestRecord.cs
+│       │   └── TestRecord.cs ✅ **ENHANCED**
 │       ├── Data/
-│       │   ├── DatabaseContext.cs
+│       │   ├── DatabaseContext.cs ✅
 │       │   └── Migrations/
+│       │       ├── InitialCreate.cs ✅
+│       │       └── AddSequenceNumber.cs ✅ **NEW**
 │       ├── Services/
-│       │   ├── DatabaseWriter.cs ✅
-│       │   ├── ReplicationMonitor.cs ✅ **NEW**
-│       │   ├── ConsoleManager.cs ✅
+│       │   ├── DatabaseWriter.cs ✅ **ENHANCED**
+│       │   ├── ReplicationMonitor.cs ✅ **ENHANCED**
+│       │   ├── ConsoleManager.cs ✅ **ENHANCED**
 │       │   ├── DatabaseSetupService.cs ✅
-│       │   └── UIManager.cs ✅
+│       │   └── UIManager.cs ✅ **ENHANCED**
 │       ├── Configuration/
 │       │   └── DatabaseGrinderSettings.cs ✅
 │       └── UI/
 │           ├── LeftPane.cs ✅
 │           └── RightPane.cs ✅ **ENHANCED**
-├── version.json (Nerdbank.GitVersioning) ✅
-└── appsettings.json ✅
+├── version.json (Nerdbook.GitVersioning) ✅
+├── appsettings.json ✅
+└── appsettings.example.json ✅ **NEW**
 ```
 
 ### Key Dependencies
@@ -226,28 +283,31 @@ DatabaseGrinder/
 
 1. **Main Thread**: UI rendering and input handling ✅
 2. **Setup Thread**: Database and user creation during startup ✅
-3. **Writer Thread**: Continuous database writing every 100ms ✅
-4. **Monitor Thread(s)**: **NEW** - Separate thread per replica for lag monitoring (up to 3) ✅
+3. **Writer Thread**: Continuous database writing every 100ms with sequence tracking ✅
+4. **Monitor Thread(s)**: Separate thread per replica for lag monitoring (up to 3) ✅
 5. **UI Update Thread**: Console refresh optimized for SSH connections (~500ms-1s) ✅
 6. **Cleanup Thread**: Periodic cleanup of records older than 5 minutes ✅
 
-### Replication Monitoring Components ✅ **NEW**
+### 🆕 Sequence Tracking Components
 
-**ReplicationMonitor Service:** Real-time lag monitoring across multiple replicas
-- ✅ Individual monitoring threads per replica
-- ✅ Continuous lag calculation (time + record count)
-- ✅ Progressive error handling with backoff
-- ✅ Real-time UI updates with visual indicators
-- ✅ Connection health monitoring
-- ✅ Performance metrics tracking
+**DatabaseWriter Enhancements:**
+- ✅ Atomic sequence number generation using `Interlocked.Increment`
+- ✅ Sequence number initialization from existing database records
+- ✅ Sequence tracking in write statistics display
+- ✅ Enhanced logging with sequence information
 
-**ReplicaStatistics Tracking:**
-- ✅ Time-based lag measurement
-- ✅ Record count lag measurement  
-- ✅ Connection status monitoring
-- ✅ Error categorization and retry logic
-- ✅ Response time tracking
-- ✅ Consecutive error counting
+**ReplicationMonitor Enhancements:**
+- ✅ Missing sequence detection across replicas
+- ✅ Performance-optimized sequence gap checking (last 100 sequences)
+- ✅ Sequence lag calculation alongside record lag
+- ✅ Visual display of missing sequence numbers
+- ✅ Error handling for sequence check failures
+
+**RightPane Display Enhancements:**
+- ✅ Multi-line replica display with sequence information
+- ✅ Missing sequence visualization with sample numbers
+- ✅ Color-coded sequence health indicators
+- ✅ Detailed lag information (time, records, sequences)
 
 ### Database Management Components
 
@@ -281,20 +341,20 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "DatabaseGri
 {
   "DatabaseGrinder": {
     "PrimaryConnection": {
-      "ConnectionString": "Host=localhost;Database=grinder_primary;Username=DatabaseGrinder;Password=DatabaseGrinder"
+      "ConnectionString": "Host=localhost:50001;Database=grinder_primary;Username=DatabaseGrinder;Password=DatabaseGrinder;Include Error Detail=true"
     },
     "ReplicaConnections": [
       {
         "Name": "Replica 1",
-        "ConnectionString": "Host=localhost;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass"
+        "ConnectionString": "Host=localhost:50001;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       },
       {
         "Name": "Replica 2", 
-        "ConnectionString": "Host=localhost;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass"
+        "ConnectionString": "Host=localhost:50001;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       },
       {
         "Name": "Replica 3",
-        "ConnectionString": "Host=localhost;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass"
+        "ConnectionString": "Host=localhost:50001;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       }
     ],
     "DatabaseManagement": {
@@ -328,7 +388,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "DatabaseGri
 3. Create reader role `DatabaseGrinderReader` if not exists ✅
 4. Grant appropriate permissions to reader role ✅
 5. Run EF Core migrations to create tables ✅
-6. Verify reader user can connect and read data ✅
+6. **🆕 Apply sequence number migration** ✅
+7. Verify reader user can connect and read data ✅
 
 ### Cross-Platform Considerations:
 - Use `Environment.OSVersion` for platform-specific console behaviors ✅
@@ -338,7 +399,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "DatabaseGri
 
 ## Current Implementation Status
 
-### ✅ **PHASES 1-5 COMPLETE** - Core Functionality Implemented
+### ✅ **PHASES 1-6 COMPLETE** - Production-Ready Replication Monitor
 
 **Ready for Production Use:**
 - ✅ **Complete database replication monitoring system**
@@ -348,27 +409,32 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "DatabaseGri
 - ✅ **Cross-platform console UI with dynamic layouts**
 - ✅ **Automated database and user setup**
 - ✅ **Configurable via appsettings.json**
+- ✅ **🆕 Sequence number tracking for missing row detection**
+- ✅ **🆕 Differential console rendering for SSH performance**
 
 **Key Features Implemented:**
 
 ### 🔄 **Real-Time Monitoring**
 - 100ms write precision to primary database
 - Individual monitoring threads per replica (up to 3)
-- Continuous lag calculation (both time and record count)
+- Continuous lag calculation (time, record count, and sequence lag)
 - Automatic error recovery with progressive backoff
+- **🆕 Missing sequence detection across replicas**
 
 ### 📊 **Advanced Visual Indicators**
 - Color-coded status icons (🟢 🟡 🔴 ⚪)
 - ASCII progress bars showing lag severity levels
-- Multi-metric lag display (time + records)
+- Multi-metric lag display (time + records + sequences)
 - Overall health summary across all replicas
 - Time-since-last-check staleness indicators
+- **🆕 Missing sequence visualization with sample numbers**
 
-### 🎯 **Lag Classification System**
+### 🎯 **Enhanced Lag Classification System**
 - **OK** (< 500ms): Excellent replication performance
 - **GOOD** (500ms - 2s): Normal replication lag  
 - **WARN** (2s - 10s): Concerning lag levels
 - **CRIT** (> 10s): Critical replication issues
+- **🆕 MISSING**: Visual alerts for missing sequence numbers
 
 ### 🚨 **Connection Failure Detection**
 - Real-time connection status monitoring
@@ -378,32 +444,42 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO "DatabaseGri
 
 ### ⚙️ **Technical Highlights**
 - **Thread-per-replica monitoring** for accurate concurrent lag detection
-- **SSH-optimized refresh rates** (800ms default, configurable)
+- **SSH-optimized refresh rates** with differential rendering
 - **Automatic data cleanup** (5-minute retention policy)
 - **Cross-platform compatibility** (Windows/Linux tested)
 - **Professional error handling** with detailed logging
+- **🆕 Sequence tracking** with missing row detection
+- **🆕 Performance optimizations** for remote connections
 
-## Next Steps - Phase 6 & 7
+### 🔢 **Sequence Number Features**
+- **Continuous Sequence Generation**: Thread-safe sequence number assignment
+- **Missing Row Detection**: Identifies gaps in replication data
+- **Visual Sequence Indicators**: Shows missing sequence numbers with samples
+- **Performance Optimized**: Checks only recent sequences to avoid overhead
+- **Replication Quality Assessment**: Distinguishes between lag and data loss
+
+## Next Steps - Phase 7
 
 ### **Remaining Tasks:**
-1. **Command-line argument support** for advanced configuration
+1. **Load testing** with multiple concurrent replicas
 2. **Performance optimization** for high-load scenarios
 3. **Enhanced documentation** with usage examples
-4. **Load testing** with multiple concurrent replicas
-5. **Deployment guides** for production environments
+4. **Deployment guides** for production environments
 
 ### **Ready for Use:**
-The application is **production-ready** for database replication monitoring with comprehensive visual feedback showing exactly how far behind each replica is in real-time.
+The application is **production-ready** for database replication monitoring with comprehensive visual feedback showing exactly how far behind each replica is in real-time, including detection of missing records through sequence number tracking.
 
 ## Summary
 
-DatabaseGrinder now provides a **complete real-time database replication monitoring solution** with advanced visual indicators that clearly show how far behind each replica is. The implementation includes:
+DatabaseGrinder now provides a **complete real-time database replication monitoring solution** with advanced visual indicators and missing row detection that clearly show how far behind each replica is. The implementation includes:
 
-- **🔴 Critical Visual Feedback**: Immediate identification of replication issues
+- **🔴 Critical Visual Feedback**: Immediate identification of replication issues and missing data
 - **📈 Multi-Level Lag Visualization**: Progress bars, metrics, and time-based indicators  
 - **⚡ Real-Time Performance**: 100ms write precision with continuous monitoring
 - **🛡️ Robust Error Handling**: Automatic recovery and detailed error reporting
-- **🖥️ SSH-Optimized Interface**: Perfect for remote server monitoring
+- **🖥️ SSH-Optimized Interface**: Perfect for remote server monitoring with differential rendering
 - **⚙️ Zero-Configuration Setup**: Automatic database and user provisioning
+- **🔢 Missing Row Detection**: Sequence number tracking to identify replication gaps
+- **🚀 Performance Optimized**: Efficient console updates and database queries
 
-**The system successfully delivers on all core requirements with enhanced visual indicators that provide instant feedback on replication health and lag severity across multiple replica databases.**
+**The system successfully delivers on all core requirements with enhanced visual indicators that provide instant feedback on replication health, lag severity, and data completeness across multiple replica databases.**

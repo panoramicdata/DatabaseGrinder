@@ -24,8 +24,13 @@ internal class Program
     {
         try
         {
-            Console.WriteLine("DatabaseGrinder v1.0 - Database Replication Monitor");
-            Console.WriteLine("Initializing...");
+            // Set console encoding to UTF-8 to handle unicode characters
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            Console.InputEncoding = System.Text.Encoding.UTF8;
+
+            // Clear console and immediately start UI (no splash screen)
+            Console.Clear();
+            Console.CursorVisible = false;
 
             var builder = Host.CreateApplicationBuilder(args);
 
@@ -37,6 +42,14 @@ internal class Program
 
             using var host = builder.Build();
 
+            // Get logger for startup messages
+            var logger = host.Services.GetRequiredService<ILogger<Program>>();
+            logger.LogInformation("DatabaseGrinder v1.1.0 - Database Replication Monitor by Panoramic Data Limited");
+            logger.LogInformation("Initializing application...");
+
+            // Log console dimensions for debugging
+            logger.LogInformation("Initial console size: {Width}x{Height}", Console.WindowWidth, Console.WindowHeight);
+
             // Validate configuration
             await ValidateConfigurationAsync(host.Services);
 
@@ -46,7 +59,7 @@ internal class Program
             // Ensure database is created and migrated
             await EnsureDatabaseAsync(host.Services);
 
-            // Initialize console and start the application
+            // Initialize console and start the application immediately
             await StartApplicationAsync(host.Services);
 
             // Run the hosted services (including DatabaseWriter and ReplicationMonitor)
@@ -56,7 +69,11 @@ internal class Program
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Fatal error: {ex.Message}");
+            // Use basic console output for fatal errors since logging may not be available
+            Console.WriteLine();
+            Console.WriteLine("FATAL ERROR:");
+            Console.WriteLine(ex.Message);
+            Console.WriteLine();
             Console.WriteLine("Press any key to exit...");
             Console.ReadKey();
             return 1;
@@ -70,11 +87,12 @@ internal class Program
     /// <param name="configuration">Application configuration</param>
     private static void ConfigureServices(IServiceCollection services, IConfiguration configuration)
     {
-        // Add logging
+        // Add logging with custom configuration to prevent console interference
         services.AddLogging(builder =>
         {
-            builder.AddConsole();
+            builder.ClearProviders(); // Clear default providers
             builder.AddConfiguration(configuration.GetSection("Logging"));
+            // We'll handle console output through our UI system
         });
 
         // Add configuration
@@ -132,6 +150,8 @@ internal class Program
         logger.LogInformation("Configuration validated successfully");
         logger.LogInformation("Primary database: {PrimaryDb}", MaskConnectionString(settings.PrimaryConnection.ConnectionString));
         logger.LogInformation("Monitoring {ReplicaCount} replica(s)", settings.ReplicaConnections.Count);
+        logger.LogInformation("Write interval: {WriteInterval}ms, UI refresh: {UIRefresh}ms", 
+            settings.Settings.WriteIntervalMs, settings.Settings.UIRefreshIntervalMs);
         
         await Task.CompletedTask;
     }
@@ -179,7 +199,7 @@ internal class Program
         {
             logger.LogInformation("Ensuring database exists and is up to date...");
             await context.Database.MigrateAsync();
-            logger.LogInformation("Database ready");
+            logger.LogInformation("Database migrations applied successfully");
         }
         catch (Exception ex)
         {
@@ -189,7 +209,7 @@ internal class Program
     }
 
     /// <summary>
-    /// Start the main application with console UI
+    /// Start the main application with console UI immediately
     /// </summary>
     /// <param name="services">Service provider</param>
     private static async Task StartApplicationAsync(IServiceProvider services)
@@ -202,17 +222,22 @@ internal class Program
 
         try
         {
-            // Initialize console
+            // Initialize console immediately - no delay
             consoleManager.Initialize();
             
+            // Log detailed layout information
             logger.LogInformation("Console initialized. Size: {Width}x{Height}", consoleManager.Width, consoleManager.Height);
+            logger.LogInformation("Layout: Left pane width: {LeftWidth}, Separator at X: {SepX}, Right pane start: {RightStart}, Right pane width: {RightWidth}",
+                consoleManager.LeftPaneWidth, consoleManager.SeparatorX, consoleManager.RightPaneStartX, consoleManager.RightPaneWidth);
             logger.LogInformation("Platform: {Platform}", consoleManager.GetPlatformInfo());
 
             // Initialize UI with startup messages
-            leftPane.AddLogEntry("DatabaseGrinder started", LogLevel.Information);
+            leftPane.AddLogEntry("DatabaseGrinder v1.1.0 started", LogLevel.Information);
+            leftPane.AddLogEntry("Enhanced with sequence tracking and missing row detection", LogLevel.Information);
+            leftPane.AddLogEntry($"Console layout: {consoleManager.LeftPaneWidth} | {consoleManager.RightPaneWidth} chars", LogLevel.Information);
             leftPane.AddLogEntry("Console UI initialized", LogLevel.Information);
             leftPane.AddLogEntry("Database setup completed", LogLevel.Information);
-            leftPane.UpdateConnectionStatus("Ready - Starting database writer...", true);
+            leftPane.UpdateConnectionStatus("Ready - Starting services...", true);
 
             // Initialize replica placeholders (ReplicationMonitor will update these with real data)
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();

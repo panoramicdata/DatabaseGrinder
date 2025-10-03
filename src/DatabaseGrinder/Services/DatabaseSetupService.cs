@@ -9,23 +9,17 @@ namespace DatabaseGrinder.Services;
 /// <summary>
 /// Service responsible for setting up the database, users, and permissions
 /// </summary>
-public class DatabaseSetupService
+public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions<DatabaseGrinderSettings> settings)
 {
-    private readonly ILogger<DatabaseSetupService> _logger;
-    private readonly DatabaseGrinderSettings _settings;
+    private readonly ILogger<DatabaseSetupService> _logger = logger;
+    private readonly DatabaseGrinderSettings _settings = settings.Value;
 
-    public DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions<DatabaseGrinderSettings> settings)
-    {
-        _logger = logger;
-        _settings = settings.Value;
-    }
-
-    /// <summary>
-    /// Perform complete database setup including database creation, user management, and permissions
-    /// </summary>
-    /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>True if setup was successful</returns>
-    public async Task<bool> SetupDatabaseAsync(CancellationToken cancellationToken = default)
+	/// <summary>
+	/// Perform complete database setup including database creation, user management, and permissions
+	/// </summary>
+	/// <param name="cancellationToken">Cancellation token</param>
+	/// <returns>True if setup was successful</returns>
+	public async Task<bool> SetupDatabaseAsync(CancellationToken cancellationToken = default)
     {
         try
         {

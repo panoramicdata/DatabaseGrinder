@@ -24,6 +24,9 @@ public class ReplicaInfo
     public ConnectionStatus Status { get; set; } = ConnectionStatus.Unknown;
     public TimeSpan? TimeLag { get; set; }
     public long? RecordLag { get; set; }
+    public long? SequenceLag { get; set; }
+    public int MissingSequenceCount { get; set; }
+    public List<long> MissingSequences { get; set; } = new();
     public DateTime? LastChecked { get; set; }
     public string? ErrorMessage { get; set; }
 }
@@ -63,6 +66,9 @@ public class RightPane
                 existing.Status = replica.Status;
                 existing.TimeLag = replica.TimeLag;
                 existing.RecordLag = replica.RecordLag;
+                existing.SequenceLag = replica.SequenceLag;
+                existing.MissingSequenceCount = replica.MissingSequenceCount;
+                existing.MissingSequences = replica.MissingSequences;
                 existing.LastChecked = replica.LastChecked;
                 existing.ErrorMessage = replica.ErrorMessage;
             }
@@ -81,11 +87,12 @@ public class RightPane
         lock (_lockObject)
         {
             var paneWidth = _consoleManager.RightPaneWidth;
-            var paneHeight = _consoleManager.Height;
-            var paneStartX = _consoleManager.LeftPaneWidth + 1; // +1 for separator
+            var contentHeight = _consoleManager.ContentHeight;
+            var paneStartX = _consoleManager.RightPaneStartX;
+            var startY = _consoleManager.ContentStartY;
 
-            // Clear right pane
-            for (int y = 0; y < paneHeight; y++)
+            // Clear right pane content area only
+            for (int y = startY; y < _consoleManager.Height; y++)
             {
                 var clearLine = new string(' ', paneWidth);
                 _consoleManager.WriteAt(paneStartX, y, clearLine);
@@ -94,35 +101,37 @@ public class RightPane
             // Draw header with overall status
             var header = "REPLICATION MONITOR";
             var headerX = paneStartX + (paneWidth - header.Length) / 2;
-            _consoleManager.WriteAt(headerX, 0, header, ConsoleColor.White, ConsoleColor.DarkBlue);
+            _consoleManager.WriteAt(headerX, startY, header, ConsoleColor.White, ConsoleColor.DarkBlue);
 
             // Draw overall status summary
             var statusSummary = GetOverallStatusSummary();
             var summaryX = paneStartX + (paneWidth - statusSummary.Text.Length) / 2;
-            _consoleManager.WriteAt(summaryX, 1, statusSummary.Text, statusSummary.Color);
+            _consoleManager.WriteAt(summaryX, startY + 1, statusSummary.Text, statusSummary.Color);
 
-            // Draw separator line
-            var separator = new string('─', paneWidth);
-            _consoleManager.WriteAt(paneStartX, 2, separator, ConsoleColor.DarkGray);
+            // Draw separator line using proper line drawing character
+            var separatorY = startY + 2;
+            var separator = new string(_consoleManager.HorizontalLineChar, paneWidth);
+            _consoleManager.WriteAt(paneStartX, separatorY, separator, ConsoleColor.DarkGray);
 
-            // Calculate space for each replica (now we need more space per replica)
-            var availableHeight = paneHeight - 3; // Minus header, status, and separator
-            var linesPerReplica = _replicas.Count > 0 ? Math.Max(5, availableHeight / _replicas.Count) : availableHeight;
+            // Calculate space for each replica
+            var availableHeight = contentHeight - 3; // Minus header, status, and separator
+            var linesPerReplica = _replicas.Count > 0 ? Math.Max(6, availableHeight / _replicas.Count) : availableHeight;
 
             // Draw replica information
-            var currentY = 3;
-            for (int i = 0; i < _replicas.Count && currentY < paneHeight; i++)
+            var currentY = separatorY + 1;
+            for (int i = 0; i < _replicas.Count && currentY < _consoleManager.Height; i++)
             {
                 var replica = _replicas[i];
-                var replicaEndY = Math.Min(currentY + linesPerReplica, paneHeight);
+                var replicaEndY = Math.Min(currentY + linesPerReplica, _consoleManager.Height);
                 
-                DrawReplicaWithProgressIndicators(replica, paneStartX, currentY, paneWidth, replicaEndY - currentY);
+                DrawReplicaWithSequenceInfo(replica, paneStartX, currentY, paneWidth, replicaEndY - currentY);
                 
                 currentY = replicaEndY;
                 
                 // Draw separator between replicas if not the last one
-                if (i < _replicas.Count - 1 && currentY < paneHeight)
+                if (i < _replicas.Count - 1 && currentY < _consoleManager.Height)
                 {
+                    // Use proper dotted line character if available
                     var repSeparator = new string('·', paneWidth);
                     _consoleManager.WriteAt(paneStartX, currentY, repSeparator, ConsoleColor.DarkGray);
                     currentY++;
@@ -134,7 +143,8 @@ public class RightPane
             {
                 var noReplicasMsg = "No replicas configured";
                 var msgX = paneStartX + (paneWidth - noReplicasMsg.Length) / 2;
-                _consoleManager.WriteAt(msgX, paneHeight / 2, noReplicasMsg, ConsoleColor.Yellow);
+                var msgY = startY + (contentHeight / 2);
+                _consoleManager.WriteAt(msgX, msgY, noReplicasMsg, ConsoleColor.Yellow);
             }
         }
     }
@@ -143,6 +153,7 @@ public class RightPane
     {
         var connected = _replicas.Count(r => r.Status == ConnectionStatus.Connected);
         var total = _replicas.Count;
+        var totalMissingSequences = _replicas.Sum(r => r.MissingSequenceCount);
         
         if (total == 0)
             return ("No replicas", ConsoleColor.Gray);
@@ -150,7 +161,10 @@ public class RightPane
         if (connected == total)
         {
             var maxLag = _replicas.Where(r => r.TimeLag.HasValue).Max(r => r.TimeLag?.TotalMilliseconds ?? 0);
-            if (maxLag < 500)
+            
+            if (totalMissingSequences > 0)
+                return ($"All {total} online - {totalMissingSequences} missing", ConsoleColor.Red);
+            else if (maxLag < 500)
                 return ($"All {total} online - Excellent", ConsoleColor.Green);
             else if (maxLag < 2000)
                 return ($"All {total} online - Good", ConsoleColor.Yellow);
@@ -167,11 +181,11 @@ public class RightPane
         }
     }
 
-    private void DrawReplicaWithProgressIndicators(ReplicaInfo replica, int startX, int startY, int width, int height)
+    private void DrawReplicaWithSequenceInfo(ReplicaInfo replica, int startX, int startY, int width, int height)
     {
         if (height < 1) return;
 
-        // Line 1: Replica name and status with icon
+        // Line 1: Replica name and status with ASCII icon
         var statusIcon = GetStatusIcon(replica.Status);
         var statusColor = GetStatusColor(replica.Status);
         var statusText = GetStatusText(replica.Status);
@@ -187,7 +201,7 @@ public class RightPane
         // Line 2: Lag information with visual indicator
         if (replica.Status == ConnectionStatus.Error && !string.IsNullOrEmpty(replica.ErrorMessage))
         {
-            var errorMsg = $"✖ Error: {replica.ErrorMessage}";
+            var errorMsg = $"X Error: {replica.ErrorMessage}";
             if (errorMsg.Length > width)
                 errorMsg = errorMsg.Substring(0, width - 3) + "...";
             
@@ -201,7 +215,7 @@ public class RightPane
         }
         else
         {
-            _consoleManager.WriteAt(startX, startY + 1, "⏳ Checking...", ConsoleColor.Gray);
+            _consoleManager.WriteAt(startX, startY + 1, "~ Checking...", ConsoleColor.Gray);
         }
 
         if (height < 3) return;
@@ -215,45 +229,119 @@ public class RightPane
 
         if (height < 4) return;
 
-        // Line 4: Record lag information (if available)
-        if (replica.RecordLag.HasValue && replica.RecordLag > 0)
+        // Line 4: Record and sequence lag information
+        if (replica.Status == ConnectionStatus.Connected)
         {
-            var recordInfo = $"📊 {replica.RecordLag} records behind";
-            if (recordInfo.Length > width)
-                recordInfo = recordInfo.Substring(0, width - 3) + "...";
+            var lagDetails = GetDetailedLagInfo(replica);
+            if (lagDetails.Length > width)
+                lagDetails = lagDetails.Substring(0, width - 3) + "...";
             
-            var recordColor = replica.RecordLag > 100 ? ConsoleColor.Red : 
-                             replica.RecordLag > 10 ? ConsoleColor.Yellow : ConsoleColor.Green;
-            _consoleManager.WriteAt(startX, startY + 3, recordInfo, recordColor);
-        }
-        else if (replica.Status == ConnectionStatus.Connected)
-        {
-            _consoleManager.WriteAt(startX, startY + 3, "📊 Up to date", ConsoleColor.Green);
+            var lagColor = GetSequenceLagColor(replica);
+            _consoleManager.WriteAt(startX, startY + 3, lagDetails, lagColor);
         }
 
         if (height < 5) return;
 
-        // Line 5: Last checked time
+        // Line 5: Missing sequence information
+        if (replica.Status == ConnectionStatus.Connected && replica.MissingSequenceCount != 0)
+        {
+            var missingInfo = GetMissingSequenceInfo(replica);
+            if (missingInfo.Length > width)
+                missingInfo = missingInfo.Substring(0, width - 3) + "...";
+            
+            var missingColor = replica.MissingSequenceCount > 0 ? ConsoleColor.Red : ConsoleColor.Green;
+            _consoleManager.WriteAt(startX, startY + 4, missingInfo, missingColor);
+        }
+        else if (replica.Status == ConnectionStatus.Connected)
+        {
+            _consoleManager.WriteAt(startX, startY + 4, "# No missing sequences", ConsoleColor.Green);
+        }
+
+        if (height < 6) return;
+
+        // Line 6: Last checked time
         if (replica.LastChecked.HasValue)
         {
             var timeSince = DateTime.Now - replica.LastChecked.Value;
             var lastChecked = timeSince.TotalSeconds < 60 
-                ? $"🕐 {timeSince.TotalSeconds:F0}s ago"
-                : $"🕐 {replica.LastChecked.Value:HH:mm:ss}";
+                ? $"@ {timeSince.TotalSeconds:F0}s ago"
+                : $"@ {replica.LastChecked.Value:HH:mm:ss}";
             
             var timeColor = timeSince.TotalMinutes > 2 ? ConsoleColor.Red : ConsoleColor.DarkGray;
-            _consoleManager.WriteAt(startX, startY + 4, lastChecked, timeColor);
+            _consoleManager.WriteAt(startX, startY + 5, lastChecked, timeColor);
         }
+    }
+
+    private string GetDetailedLagInfo(ReplicaInfo replica)
+    {
+        var parts = new List<string>();
+        
+        if (replica.RecordLag.HasValue && replica.RecordLag > 0)
+        {
+            parts.Add($"{replica.RecordLag} records");
+        }
+        
+        if (replica.SequenceLag.HasValue && replica.SequenceLag > 0)
+        {
+            parts.Add($"{replica.SequenceLag} seq");
+        }
+        
+        if (parts.Count == 0)
+        {
+            return "= Up to date";
+        }
+        
+        return $"Behind: {string.Join(", ", parts)}";
+    }
+
+    private string GetMissingSequenceInfo(ReplicaInfo replica)
+    {
+        if (replica.MissingSequenceCount == -1)
+        {
+            return "# Sequence check failed";
+        }
+        
+        if (replica.MissingSequenceCount == 0)
+        {
+            return "# No missing sequences";
+        }
+        
+        if (replica.MissingSequences.Count > 0)
+        {
+            var sequences = string.Join(",", replica.MissingSequences.Take(5));
+            if (replica.MissingSequenceCount > 5)
+            {
+                sequences += "...";
+            }
+            return $"# Missing: {sequences} ({replica.MissingSequenceCount} total)";
+        }
+        
+        return $"# {replica.MissingSequenceCount} missing sequences";
+    }
+
+    private ConsoleColor GetSequenceLagColor(ReplicaInfo replica)
+    {
+        if (replica.MissingSequenceCount > 0)
+            return ConsoleColor.Red;
+        
+        if (replica.SequenceLag.HasValue && replica.SequenceLag > 10)
+            return ConsoleColor.Yellow;
+        
+        if (replica.RecordLag.HasValue && replica.RecordLag > 10)
+            return ConsoleColor.Yellow;
+        
+        return ConsoleColor.Green;
     }
 
     private string GetStatusIcon(ConnectionStatus status)
     {
+        // Use ASCII characters that work reliably across all platforms
         return status switch
         {
-            ConnectionStatus.Connected => "🟢",
-            ConnectionStatus.Disconnected => "🟡",
-            ConnectionStatus.Error => "🔴",
-            _ => "⚪"
+            ConnectionStatus.Connected => "+",
+            ConnectionStatus.Disconnected => "?",
+            ConnectionStatus.Error => "!",
+            _ => "-"
         };
     }
 
@@ -286,14 +374,14 @@ public class RightPane
         if (replica.TimeLag.HasValue)
         {
             if (replica.TimeLag.Value.TotalMilliseconds < 1000)
-                parts.Add($"⚡ {replica.TimeLag.Value.TotalMilliseconds:F0}ms");
+                parts.Add($"* {replica.TimeLag.Value.TotalMilliseconds:F0}ms");
             else if (replica.TimeLag.Value.TotalSeconds < 60)
-                parts.Add($"⏱️ {replica.TimeLag.Value.TotalSeconds:F1}s");
+                parts.Add($"^ {replica.TimeLag.Value.TotalSeconds:F1}s");
             else
-                parts.Add($"⏰ {replica.TimeLag.Value.TotalMinutes:F1}m");
+                parts.Add($">> {replica.TimeLag.Value.TotalMinutes:F1}m");
         }
 
-        return parts.Count > 0 ? string.Join(", ", parts) : "⏳ Calculating...";
+        return parts.Count > 0 ? string.Join(", ", parts) : "~ Calculating...";
     }
 
     private (string Bar, ConsoleColor Color) CreateLagProgressBar(TimeSpan timeLag, int width)
@@ -312,25 +400,25 @@ public class RightPane
         var bar = new System.Text.StringBuilder();
         bar.Append("LAG [");
         
-        // Create the progress bar
+        // Create the progress bar using ASCII characters
         for (int i = 0; i < barWidth; i++)
         {
             if (i < filledBlocks)
             {
-                if (lagMs < 500) bar.Append('█'); // Excellent - solid block
-                else if (lagMs < 2000) bar.Append('▓'); // Good - medium block  
-                else if (lagMs < 10000) bar.Append('▒'); // Warning - light block
-                else bar.Append('░'); // Critical - very light block
+                if (lagMs < 500) bar.Append('='); // Excellent - solid block
+                else if (lagMs < 2000) bar.Append('#'); // Good - hash
+                else if (lagMs < 10000) bar.Append('-'); // Warning - dash
+                else bar.Append('.'); // Critical - dot
             }
             else
             {
-                bar.Append('·');
+                bar.Append(' ');
             }
         }
         
         bar.Append(']');
         
-        // Add percentage
+        // Add status
         if (lagMs < 500)
             bar.Append(" OK");
         else if (lagMs < 2000)

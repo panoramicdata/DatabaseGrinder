@@ -1,53 +1,49 @@
-using Microsoft.EntityFrameworkCore;
 using DatabaseGrinder.Models;
+using Microsoft.EntityFrameworkCore;
 
 namespace DatabaseGrinder.Data;
 
 /// <summary>
 /// Entity Framework Database Context for DatabaseGrinder
 /// </summary>
-public class DatabaseContext : DbContext
+/// <remarks>
+/// Initializes a new instance of the DatabaseContext
+/// </remarks>
+/// <param name="options">The options for this context</param>
+public class DatabaseContext(DbContextOptions<DatabaseContext> options) : DbContext(options)
 {
-    /// <summary>
-    /// Test records table for replication monitoring
-    /// </summary>
-    public DbSet<TestRecord> TestRecords { get; set; } = null!;
+	/// <summary>
+	/// Test records table for replication monitoring
+	/// </summary>
+	public DbSet<TestRecord> TestRecords { get; set; } = null!;
 
-    /// <summary>
-    /// Initializes a new instance of the DatabaseContext
-    /// </summary>
-    /// <param name="options">The options for this context</param>
-    public DatabaseContext(DbContextOptions<DatabaseContext> options) : base(options)
-    {
-    }
+	/// <summary>
+	/// Configures the model relationships and constraints
+	/// </summary>
+	/// <param name="modelBuilder">The builder being used to construct the model for this context</param>
+	protected override void OnModelCreating(ModelBuilder modelBuilder)
+	{
+		base.OnModelCreating(modelBuilder);
 
-    /// <summary>
-    /// Configures the model relationships and constraints
-    /// </summary>
-    /// <param name="modelBuilder">The builder being used to construct the model for this context</param>
-    protected override void OnModelCreating(ModelBuilder modelBuilder)
-    {
-        base.OnModelCreating(modelBuilder);
+		// Configure TestRecord entity
+		modelBuilder.Entity<TestRecord>(entity =>
+		{
+			entity.ToTable("test_records");
 
-        // Configure TestRecord entity
-        modelBuilder.Entity<TestRecord>(entity =>
-        {
-            entity.ToTable("test_records");
-            
-            entity.HasKey(e => e.Id);
-            
-            entity.Property(e => e.Id)
-                .HasColumnName("id")
-                .ValueGeneratedOnAdd();
-                
-            entity.Property(e => e.Timestamp)
-                .HasColumnName("timestamp")
-                .HasColumnType("timestamp with time zone")
-                .IsRequired();
+			entity.HasKey(e => e.Id);
 
-            // Index on timestamp for efficient cleanup queries
-            entity.HasIndex(e => e.Timestamp)
-                .HasDatabaseName("ix_test_records_timestamp");
-        });
-    }
+			entity.Property(e => e.Id)
+				.HasColumnName("id")
+				.ValueGeneratedOnAdd();
+
+			entity.Property(e => e.Timestamp)
+				.HasColumnName("timestamp")
+				.HasColumnType("timestamp with time zone")
+				.IsRequired();
+
+			// Index on timestamp for efficient cleanup queries
+			entity.HasIndex(e => e.Timestamp)
+				.HasDatabaseName("ix_test_records_timestamp");
+		});
+	}
 }

@@ -1,13 +1,13 @@
+using DatabaseGrinder.Configuration;
+using DatabaseGrinder.Data;
+using DatabaseGrinder.Models;
+using DatabaseGrinder.UI;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
-using DatabaseGrinder.Configuration;
-using DatabaseGrinder.Data;
-using DatabaseGrinder.Models;
-using DatabaseGrinder.UI;
 
 namespace DatabaseGrinder.Services;
 
@@ -16,15 +16,16 @@ namespace DatabaseGrinder.Services;
 /// </summary>
 public class WriteStatistics
 {
-    public long TotalRecords { get; set; }
-    public long RecordsPerSecond { get; set; }
-    public long ErrorCount { get; set; }
-    public DateTime LastWriteTime { get; set; }
-    public DateTime StartTime { get; set; }
-    public string? LastError { get; set; }
-    public bool IsConnected { get; set; } = true;
+	public long TotalRecords { get; set; }
+	public long RecordsPerSecond { get; set; }
+	public long ErrorCount { get; set; }
+	public DateTime LastWriteTime { get; set; }
+	public DateTime StartTime { get; set; }
+	public string? LastError { get; set; }
+	public bool IsConnected { get; set; } = true;
+	public long CurrentSequenceNumber { get; set; }
 
-    public TimeSpan UpTime => DateTime.Now - StartTime;
+	public TimeSpan UpTime => DateTime.Now - StartTime;
 }
 
 /// <summary>
@@ -32,185 +33,220 @@ public class WriteStatistics
 /// </summary>
 public class DatabaseWriter : BackgroundService
 {
-    private readonly IServiceProvider _serviceProvider;
-    private readonly ILogger<DatabaseWriter> _logger;
-    private readonly DatabaseGrinderSettings _settings;
-    private readonly LeftPane _leftPane;
-    private readonly WriteStatistics _statistics;
-    private readonly Timer _cleanupTimer;
-    private readonly ConcurrentQueue<DateTime> _recentWrites = new();
+	private readonly IServiceProvider _serviceProvider;
+	private readonly ILogger<DatabaseWriter> _logger;
+	private readonly DatabaseGrinderSettings _settings;
+	private readonly LeftPane _leftPane;
+	private readonly WriteStatistics _statistics;
+	private readonly Timer _cleanupTimer;
+	private readonly ConcurrentQueue<DateTime> _recentWrites = new();
+	private long _sequenceNumber = 0;
 
-    public DatabaseWriter(
-        IServiceProvider serviceProvider,
-        ILogger<DatabaseWriter> logger, 
-        IOptions<DatabaseGrinderSettings> settings,
-        LeftPane leftPane)
-    {
-        _serviceProvider = serviceProvider;
-        _logger = logger;
-        _settings = settings.Value;
-        _leftPane = leftPane;
-        _statistics = new WriteStatistics 
-        { 
-            StartTime = DateTime.Now 
-        };
+	public DatabaseWriter(
+		IServiceProvider serviceProvider,
+		ILogger<DatabaseWriter> logger,
+		IOptions<DatabaseGrinderSettings> settings,
+		LeftPane leftPane)
+	{
+		_serviceProvider = serviceProvider;
+		_logger = logger;
+		_settings = settings.Value;
+		_leftPane = leftPane;
+		_statistics = new WriteStatistics
+		{
+			StartTime = DateTime.Now
+		};
 
-        // Set up cleanup timer to run every minute
-        _cleanupTimer = new Timer(
-            callback: _ => _ = CleanupOldRecordsAsync(),
-            state: null,
-            dueTime: TimeSpan.FromMinutes(1),
-            period: TimeSpan.FromMinutes(1));
-    }
+		// Set up cleanup timer to run every minute
+		_cleanupTimer = new Timer(
+			callback: _ => _ = CleanupOldRecordsAsync(),
+			state: null,
+			dueTime: TimeSpan.FromMinutes(1),
+			period: TimeSpan.FromMinutes(1));
+	}
 
-    /// <summary>
-    /// Get current write statistics
-    /// </summary>
-    public WriteStatistics Statistics => _statistics;
+	/// <summary>
+	/// Get current write statistics
+	/// </summary>
+	public WriteStatistics Statistics => _statistics;
 
-    /// <summary>
-    /// Main execution loop for the database writer
-    /// </summary>
-    /// <param name="stoppingToken">Cancellation token</param>
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        _logger.LogInformation("DatabaseWriter started - writing every {IntervalMs}ms", _settings.Settings.WriteIntervalMs);
-        _leftPane.AddLogEntry("DatabaseWriter service started", LogLevel.Information);
+	/// <summary>
+	/// Main execution loop for the database writer
+	/// </summary>
+	/// <param name="stoppingToken">Cancellation token</param>
+	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+	{
+		_logger.LogInformation("DatabaseWriter started - writing every {IntervalMs}ms with sequence tracking",
+			_settings.Settings.WriteIntervalMs);
+		_leftPane.AddLogEntry("DatabaseWriter service started with sequence tracking", LogLevel.Information);
 
-        var writeInterval = TimeSpan.FromMilliseconds(_settings.Settings.WriteIntervalMs);
-        var statsUpdateInterval = TimeSpan.FromSeconds(1);
-        var lastStatsUpdate = DateTime.Now;
+		// Initialize sequence number from database
+		await InitializeSequenceNumberAsync(stoppingToken);
 
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            var startTime = DateTime.Now;
+		var writeInterval = TimeSpan.FromMilliseconds(_settings.Settings.WriteIntervalMs);
+		var statsUpdateInterval = TimeSpan.FromSeconds(1);
+		var lastStatsUpdate = DateTime.Now;
 
-            try
-            {
-                // Write a new record
-                await WriteRecordAsync(stoppingToken);
-                
-                // Update statistics
-                _statistics.TotalRecords++;
-                _statistics.LastWriteTime = DateTime.Now;
-                _statistics.IsConnected = true;
-                
-                // Add to recent writes for rate calculation
-                _recentWrites.Enqueue(DateTime.Now);
-                
-                // Update UI with successful write
-                _leftPane.AddLogEntry($"Record #{_statistics.TotalRecords} inserted successfully", LogLevel.Information);
-                
-                // Update statistics display periodically
-                if (DateTime.Now - lastStatsUpdate >= statsUpdateInterval)
-                {
-                    UpdateStatistics();
-                    lastStatsUpdate = DateTime.Now;
-                }
-            }
-            catch (Exception ex)
-            {
-                _statistics.ErrorCount++;
-                _statistics.LastError = ex.Message;
-                _statistics.IsConnected = false;
-                
-                _logger.LogError(ex, "Failed to write record to database");
-                _leftPane.AddLogEntry($"ERROR: Write failed - {ex.Message}", LogLevel.Error);
-                
-                // Wait longer on error before retrying
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-                continue;
-            }
+		while (!stoppingToken.IsCancellationRequested)
+		{
+			var startTime = DateTime.Now;
 
-            // Calculate how long to wait for the next write
-            var elapsed = DateTime.Now - startTime;
-            var remainingTime = writeInterval - elapsed;
-            
-            if (remainingTime > TimeSpan.Zero)
-            {
-                await Task.Delay(remainingTime, stoppingToken);
-            }
-        }
+			try
+			{
+				// Write a new record
+				await WriteRecordAsync(stoppingToken);
 
-        _logger.LogInformation("DatabaseWriter stopped");
-        _leftPane.AddLogEntry("DatabaseWriter service stopped", LogLevel.Warning);
-    }
+				// Update statistics
+				_statistics.TotalRecords++;
+				_statistics.LastWriteTime = DateTime.Now;
+				_statistics.IsConnected = true;
+				_statistics.CurrentSequenceNumber = _sequenceNumber;
 
-    /// <summary>
-    /// Write a single timestamp record to the database
-    /// </summary>
-    private async Task WriteRecordAsync(CancellationToken cancellationToken)
-    {
-        using var scope = _serviceProvider.CreateScope();
-        var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
-        
-        var record = new TestRecord(DateTime.UtcNow);
-        
-        context.TestRecords.Add(record);
-        await context.SaveChangesAsync(cancellationToken);
-        
-        _logger.LogDebug("Inserted record with ID {RecordId} at {Timestamp}", record.Id, record.Timestamp);
-    }
+				// Add to recent writes for rate calculation
+				_recentWrites.Enqueue(DateTime.Now);
 
-    /// <summary>
-    /// Update write rate statistics based on recent writes
-    /// </summary>
-    private void UpdateStatistics()
-    {
-        var cutoffTime = DateTime.Now.AddSeconds(-60); // Last 60 seconds
-        
-        // Remove writes older than 60 seconds and count remaining
-        while (_recentWrites.TryPeek(out var writeTime) && writeTime < cutoffTime)
-        {
-            _recentWrites.TryDequeue(out _);
-        }
-        
-        // Calculate writes per second (average over last 60 seconds)
-        _statistics.RecordsPerSecond = _recentWrites.Count;
-        
-        // Update UI with current statistics
-        var statsMessage = $"Stats: {_statistics.RecordsPerSecond}/sec | Total: {_statistics.TotalRecords} | Errors: {_statistics.ErrorCount} | Up: {_statistics.UpTime:hh\\:mm\\:ss}";
-        _leftPane.AddLogEntry(statsMessage, LogLevel.Information);
-    }
+				// Update UI with successful write
+				_leftPane.AddLogEntry($"Record #{_statistics.TotalRecords} (seq:{_sequenceNumber}) inserted successfully", LogLevel.Information);
 
-    /// <summary>
-    /// Clean up records older than the retention period
-    /// </summary>
-    private async Task CleanupOldRecordsAsync()
-    {
-        try
-        {
-            using var scope = _serviceProvider.CreateScope();
-            var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
-            
-            var cutoffTime = DateTime.UtcNow.AddMinutes(-_settings.Settings.DataRetentionMinutes);
-            
-            var oldRecords = await context.TestRecords
-                .Where(r => r.Timestamp < cutoffTime)
-                .ToListAsync();
-            
-            if (oldRecords.Count > 0)
-            {
-                context.TestRecords.RemoveRange(oldRecords);
-                await context.SaveChangesAsync();
-                
-                _logger.LogInformation("Cleaned up {Count} old records older than {CutoffTime}", oldRecords.Count, cutoffTime);
-                _leftPane.AddLogEntry($"Cleaned up {oldRecords.Count} old records", LogLevel.Information);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to cleanup old records");
-            _leftPane.AddLogEntry($"Cleanup failed: {ex.Message}", LogLevel.Warning);
-        }
-    }
+				// Update statistics display periodically
+				if (DateTime.Now - lastStatsUpdate >= statsUpdateInterval)
+				{
+					UpdateStatistics();
+					lastStatsUpdate = DateTime.Now;
+				}
+			}
+			catch (Exception ex)
+			{
+				_statistics.ErrorCount++;
+				_statistics.LastError = ex.Message;
+				_statistics.IsConnected = false;
 
-    /// <summary>
-    /// Dispose resources
-    /// </summary>
-    public override void Dispose()
-    {
-        _cleanupTimer?.Dispose();
-        base.Dispose();
-    }
+				_logger.LogError(ex, "Failed to write record to database");
+				_leftPane.AddLogEntry($"ERROR: Write failed - {ex.Message}", LogLevel.Error);
+
+				// Wait longer on error before retrying
+				await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+				continue;
+			}
+
+			// Calculate how long to wait for the next write
+			var elapsed = DateTime.Now - startTime;
+			var remainingTime = writeInterval - elapsed;
+
+			if (remainingTime > TimeSpan.Zero)
+			{
+				await Task.Delay(remainingTime, stoppingToken);
+			}
+		}
+
+		_logger.LogInformation("DatabaseWriter stopped");
+		_leftPane.AddLogEntry("DatabaseWriter service stopped", LogLevel.Warning);
+	}
+
+	/// <summary>
+	/// Initialize sequence number from the database
+	/// </summary>
+	private async Task InitializeSequenceNumberAsync(CancellationToken cancellationToken)
+	{
+		try
+		{
+			using var scope = _serviceProvider.CreateScope();
+			var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+
+			// Get the highest sequence number from existing records
+			var maxSequence = await context.TestRecords
+				.MaxAsync(r => (long?)r.SequenceNumber, cancellationToken);
+
+			_sequenceNumber = maxSequence ?? 0;
+			_logger.LogInformation("Initialized sequence number to {SequenceNumber}", _sequenceNumber);
+			_leftPane.AddLogEntry($"Sequence number initialized to {_sequenceNumber}", LogLevel.Information);
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to initialize sequence number, starting from 0");
+			_sequenceNumber = 0;
+		}
+	}
+
+	/// <summary>
+	/// Write a single timestamp record to the database
+	/// </summary>
+	private async Task WriteRecordAsync(CancellationToken cancellationToken)
+	{
+		using var scope = _serviceProvider.CreateScope();
+		var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+
+		// Increment sequence number
+		var currentSequence = Interlocked.Increment(ref _sequenceNumber);
+
+		var record = new TestRecord(DateTime.UtcNow, currentSequence);
+
+		context.TestRecords.Add(record);
+		await context.SaveChangesAsync(cancellationToken);
+
+		_logger.LogDebug("Inserted record with ID {RecordId}, Sequence {SequenceNumber} at {Timestamp}",
+			record.Id, record.SequenceNumber, record.Timestamp);
+	}
+
+	/// <summary>
+	/// Update write rate statistics based on recent writes
+	/// </summary>
+	private void UpdateStatistics()
+	{
+		var cutoffTime = DateTime.Now.AddSeconds(-60); // Last 60 seconds
+
+		// Remove writes older than 60 seconds and count remaining
+		while (_recentWrites.TryPeek(out var writeTime) && writeTime < cutoffTime)
+		{
+			_recentWrites.TryDequeue(out _);
+		}
+
+		// Calculate writes per second (average over last 60 seconds)
+		_statistics.RecordsPerSecond = _recentWrites.Count;
+
+		// Update UI with current statistics
+		var statsMessage = $"Stats: {_statistics.RecordsPerSecond}/sec | Total: {_statistics.TotalRecords} | Seq: {_statistics.CurrentSequenceNumber} | Errors: {_statistics.ErrorCount} | Up: {_statistics.UpTime:hh\\:mm\\:ss}";
+		_leftPane.AddLogEntry(statsMessage, LogLevel.Information);
+	}
+
+	/// <summary>
+	/// Clean up records older than the retention period
+	/// </summary>
+	private async Task CleanupOldRecordsAsync()
+	{
+		try
+		{
+			using var scope = _serviceProvider.CreateScope();
+			var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+
+			var cutoffTime = DateTime.UtcNow.AddMinutes(-_settings.Settings.DataRetentionMinutes);
+
+			var oldRecords = await context.TestRecords
+				.Where(r => r.Timestamp < cutoffTime)
+				.ToListAsync();
+
+			if (oldRecords.Count > 0)
+			{
+				context.TestRecords.RemoveRange(oldRecords);
+				await context.SaveChangesAsync();
+
+				_logger.LogInformation("Cleaned up {Count} old records older than {CutoffTime}", oldRecords.Count, cutoffTime);
+				_leftPane.AddLogEntry($"Cleaned up {oldRecords.Count} old records", LogLevel.Information);
+			}
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Failed to cleanup old records");
+			_leftPane.AddLogEntry($"Cleanup failed: {ex.Message}", LogLevel.Warning);
+		}
+	}
+
+	/// <summary>
+	/// Dispose resources
+	/// </summary>
+	public override void Dispose()
+	{
+		_cleanupTimer?.Dispose();
+		base.Dispose();
+	}
 }
