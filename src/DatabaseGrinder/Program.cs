@@ -49,7 +49,7 @@ internal class Program
             // Initialize console and start the application
             await StartApplicationAsync(host.Services);
 
-            // Run the hosted services (including DatabaseWriter)
+            // Run the hosted services (including DatabaseWriter and ReplicationMonitor)
             await host.RunAsync();
 
             return 0;
@@ -98,8 +98,9 @@ internal class Program
         services.AddSingleton<RightPane>();
         services.AddScoped<DatabaseSetupService>();
         
-        // Add background services
+        // Add background services (order matters for dependencies)
         services.AddHostedService<DatabaseWriter>();
+        services.AddHostedService<ReplicationMonitor>();
         services.AddHostedService<UIManager>();
     }
 
@@ -213,7 +214,7 @@ internal class Program
             leftPane.AddLogEntry("Database setup completed", LogLevel.Information);
             leftPane.UpdateConnectionStatus("Ready - Starting database writer...", true);
 
-            // Add sample replica data from configuration
+            // Initialize replica placeholders (ReplicationMonitor will update these with real data)
             var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
             var settings = new DatabaseGrinderSettings();
             configuration.GetSection("DatabaseGrinder").Bind(settings);
@@ -224,12 +225,12 @@ internal class Program
                 { 
                     Name = replica.Name, 
                     Status = ConnectionStatus.Unknown,
-                    LastChecked = DateTime.Now 
+                    LastChecked = null 
                 });
             }
 
             logger.LogInformation("UI initialized successfully. Background services will start automatically.");
-            leftPane.AddLogEntry("Background services starting...", LogLevel.Information);
+            leftPane.AddLogEntry("Starting database writer and replication monitor...", LogLevel.Information);
             
             await Task.CompletedTask;
         }

@@ -91,27 +91,32 @@ public class RightPane
                 _consoleManager.WriteAt(paneStartX, y, clearLine);
             }
 
-            // Draw header
+            // Draw header with overall status
             var header = "REPLICATION MONITOR";
             var headerX = paneStartX + (paneWidth - header.Length) / 2;
             _consoleManager.WriteAt(headerX, 0, header, ConsoleColor.White, ConsoleColor.DarkBlue);
 
+            // Draw overall status summary
+            var statusSummary = GetOverallStatusSummary();
+            var summaryX = paneStartX + (paneWidth - statusSummary.Text.Length) / 2;
+            _consoleManager.WriteAt(summaryX, 1, statusSummary.Text, statusSummary.Color);
+
             // Draw separator line
             var separator = new string('─', paneWidth);
-            _consoleManager.WriteAt(paneStartX, 1, separator, ConsoleColor.DarkGray);
+            _consoleManager.WriteAt(paneStartX, 2, separator, ConsoleColor.DarkGray);
 
-            // Calculate space for each replica
-            var availableHeight = paneHeight - 2; // Minus header and separator
-            var linesPerReplica = _replicas.Count > 0 ? Math.Max(3, availableHeight / _replicas.Count) : availableHeight;
+            // Calculate space for each replica (now we need more space per replica)
+            var availableHeight = paneHeight - 3; // Minus header, status, and separator
+            var linesPerReplica = _replicas.Count > 0 ? Math.Max(5, availableHeight / _replicas.Count) : availableHeight;
 
             // Draw replica information
-            var currentY = 2;
+            var currentY = 3;
             for (int i = 0; i < _replicas.Count && currentY < paneHeight; i++)
             {
                 var replica = _replicas[i];
                 var replicaEndY = Math.Min(currentY + linesPerReplica, paneHeight);
                 
-                DrawReplica(replica, paneStartX, currentY, paneWidth, replicaEndY - currentY);
+                DrawReplicaWithProgressIndicators(replica, paneStartX, currentY, paneWidth, replicaEndY - currentY);
                 
                 currentY = replicaEndY;
                 
@@ -134,15 +139,44 @@ public class RightPane
         }
     }
 
-    private void DrawReplica(ReplicaInfo replica, int startX, int startY, int width, int height)
+    private (string Text, ConsoleColor Color) GetOverallStatusSummary()
+    {
+        var connected = _replicas.Count(r => r.Status == ConnectionStatus.Connected);
+        var total = _replicas.Count;
+        
+        if (total == 0)
+            return ("No replicas", ConsoleColor.Gray);
+        
+        if (connected == total)
+        {
+            var maxLag = _replicas.Where(r => r.TimeLag.HasValue).Max(r => r.TimeLag?.TotalMilliseconds ?? 0);
+            if (maxLag < 500)
+                return ($"All {total} online - Excellent", ConsoleColor.Green);
+            else if (maxLag < 2000)
+                return ($"All {total} online - Good", ConsoleColor.Yellow);
+            else
+                return ($"All {total} online - High lag", ConsoleColor.Red);
+        }
+        else if (connected > 0)
+        {
+            return ($"{connected}/{total} online", ConsoleColor.Yellow);
+        }
+        else
+        {
+            return ($"All {total} offline", ConsoleColor.Red);
+        }
+    }
+
+    private void DrawReplicaWithProgressIndicators(ReplicaInfo replica, int startX, int startY, int width, int height)
     {
         if (height < 1) return;
 
-        // Line 1: Replica name and status
+        // Line 1: Replica name and status with icon
+        var statusIcon = GetStatusIcon(replica.Status);
         var statusColor = GetStatusColor(replica.Status);
         var statusText = GetStatusText(replica.Status);
         
-        var line1 = $"{replica.Name}: {statusText}";
+        var line1 = $"{statusIcon} {replica.Name}: {statusText}";
         if (line1.Length > width)
             line1 = line1.Substring(0, width - 3) + "...";
         
@@ -150,10 +184,10 @@ public class RightPane
 
         if (height < 2) return;
 
-        // Line 2: Lag information or error
+        // Line 2: Lag information with visual indicator
         if (replica.Status == ConnectionStatus.Error && !string.IsNullOrEmpty(replica.ErrorMessage))
         {
-            var errorMsg = $"Error: {replica.ErrorMessage}";
+            var errorMsg = $"✖ Error: {replica.ErrorMessage}";
             if (errorMsg.Length > width)
                 errorMsg = errorMsg.Substring(0, width - 3) + "...";
             
@@ -162,17 +196,65 @@ public class RightPane
         else if (replica.Status == ConnectionStatus.Connected)
         {
             var lagInfo = GetLagDisplayText(replica);
-            _consoleManager.WriteAt(startX, startY + 1, lagInfo, GetLagColor(replica.TimeLag));
+            var lagColor = GetLagColor(replica.TimeLag);
+            _consoleManager.WriteAt(startX, startY + 1, lagInfo, lagColor);
+        }
+        else
+        {
+            _consoleManager.WriteAt(startX, startY + 1, "⏳ Checking...", ConsoleColor.Gray);
         }
 
         if (height < 3) return;
 
-        // Line 3: Last checked time
+        // Line 3: Progress bar showing lag severity
+        if (replica.Status == ConnectionStatus.Connected && replica.TimeLag.HasValue)
+        {
+            var progressBar = CreateLagProgressBar(replica.TimeLag.Value, width - 2);
+            _consoleManager.WriteAt(startX, startY + 2, progressBar.Bar, progressBar.Color);
+        }
+
+        if (height < 4) return;
+
+        // Line 4: Record lag information (if available)
+        if (replica.RecordLag.HasValue && replica.RecordLag > 0)
+        {
+            var recordInfo = $"📊 {replica.RecordLag} records behind";
+            if (recordInfo.Length > width)
+                recordInfo = recordInfo.Substring(0, width - 3) + "...";
+            
+            var recordColor = replica.RecordLag > 100 ? ConsoleColor.Red : 
+                             replica.RecordLag > 10 ? ConsoleColor.Yellow : ConsoleColor.Green;
+            _consoleManager.WriteAt(startX, startY + 3, recordInfo, recordColor);
+        }
+        else if (replica.Status == ConnectionStatus.Connected)
+        {
+            _consoleManager.WriteAt(startX, startY + 3, "📊 Up to date", ConsoleColor.Green);
+        }
+
+        if (height < 5) return;
+
+        // Line 5: Last checked time
         if (replica.LastChecked.HasValue)
         {
-            var lastChecked = $"Last: {replica.LastChecked.Value:HH:mm:ss}";
-            _consoleManager.WriteAt(startX, startY + 2, lastChecked, ConsoleColor.DarkGray);
+            var timeSince = DateTime.Now - replica.LastChecked.Value;
+            var lastChecked = timeSince.TotalSeconds < 60 
+                ? $"🕐 {timeSince.TotalSeconds:F0}s ago"
+                : $"🕐 {replica.LastChecked.Value:HH:mm:ss}";
+            
+            var timeColor = timeSince.TotalMinutes > 2 ? ConsoleColor.Red : ConsoleColor.DarkGray;
+            _consoleManager.WriteAt(startX, startY + 4, lastChecked, timeColor);
         }
+    }
+
+    private string GetStatusIcon(ConnectionStatus status)
+    {
+        return status switch
+        {
+            ConnectionStatus.Connected => "🟢",
+            ConnectionStatus.Disconnected => "🟡",
+            ConnectionStatus.Error => "🔴",
+            _ => "⚪"
+        };
     }
 
     private ConsoleColor GetStatusColor(ConnectionStatus status)
@@ -204,17 +286,62 @@ public class RightPane
         if (replica.TimeLag.HasValue)
         {
             if (replica.TimeLag.Value.TotalMilliseconds < 1000)
-                parts.Add($"{replica.TimeLag.Value.TotalMilliseconds:F0}ms");
+                parts.Add($"⚡ {replica.TimeLag.Value.TotalMilliseconds:F0}ms");
+            else if (replica.TimeLag.Value.TotalSeconds < 60)
+                parts.Add($"⏱️ {replica.TimeLag.Value.TotalSeconds:F1}s");
             else
-                parts.Add($"{replica.TimeLag.Value.TotalSeconds:F1}s");
+                parts.Add($"⏰ {replica.TimeLag.Value.TotalMinutes:F1}m");
         }
 
-        if (replica.RecordLag.HasValue)
+        return parts.Count > 0 ? string.Join(", ", parts) : "⏳ Calculating...";
+    }
+
+    private (string Bar, ConsoleColor Color) CreateLagProgressBar(TimeSpan timeLag, int width)
+    {
+        if (width < 10) return ("", ConsoleColor.Gray);
+
+        var lagMs = timeLag.TotalMilliseconds;
+        
+        // Define thresholds: 0-500ms (excellent), 500ms-2s (good), 2s-10s (warning), 10s+ (critical)
+        var maxScale = 10000; // 10 seconds max scale
+        var percentage = Math.Min(lagMs / maxScale, 1.0);
+        
+        var barWidth = width - 8; // Leave space for brackets and percentage
+        var filledBlocks = (int)(percentage * barWidth);
+        
+        var bar = new System.Text.StringBuilder();
+        bar.Append("LAG [");
+        
+        // Create the progress bar
+        for (int i = 0; i < barWidth; i++)
         {
-            parts.Add($"{replica.RecordLag.Value} records");
+            if (i < filledBlocks)
+            {
+                if (lagMs < 500) bar.Append('█'); // Excellent - solid block
+                else if (lagMs < 2000) bar.Append('▓'); // Good - medium block  
+                else if (lagMs < 10000) bar.Append('▒'); // Warning - light block
+                else bar.Append('░'); // Critical - very light block
+            }
+            else
+            {
+                bar.Append('·');
+            }
         }
-
-        return parts.Count > 0 ? $"Lag: {string.Join(", ", parts)}" : "Lag: Unknown";
+        
+        bar.Append(']');
+        
+        // Add percentage
+        if (lagMs < 500)
+            bar.Append(" OK");
+        else if (lagMs < 2000)
+            bar.Append(" GOOD");
+        else if (lagMs < 10000)
+            bar.Append(" WARN");
+        else
+            bar.Append(" CRIT");
+        
+        var color = GetLagColor(timeLag);
+        return (bar.ToString(), color);
     }
 
     private ConsoleColor GetLagColor(TimeSpan? timeLag)
