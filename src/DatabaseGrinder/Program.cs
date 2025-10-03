@@ -269,13 +269,17 @@ internal class Program
 			options.UseNpgsql(primaryConnectionString);
 		});
 
+		// Get console size from configuration
+		var minWidth = configuration.GetValue<int>("DatabaseGrinder:Settings:MinConsoleWidth", 80);
+		var minHeight = configuration.GetValue<int>("DatabaseGrinder:Settings:MinConsoleHeight", 25);
+
 		// Add application services
-		services.AddSingleton<ConsoleManager>();
+		services.AddSingleton<ConsoleManager>(provider => new ConsoleManager(minWidth, minHeight));
 		services.AddSingleton<LeftPane>();
 		services.AddSingleton<RightPane>();
 		services.AddScoped<DatabaseSetupService>();
 		services.AddScoped<DatabaseCleanupService>(); // Add cleanup service
-
+		
 		// Add background services (order matters for dependencies)
 		services.AddHostedService<DatabaseWriter>();
 		services.AddHostedService<ReplicationMonitor>();

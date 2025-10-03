@@ -44,15 +44,23 @@ public class UIManager : BackgroundService
 		_logger.LogInformation("UI Manager started - refreshing every {IntervalMs}ms with differential rendering",
 			_settings.Settings.UIRefreshIntervalMs);
 
-		_leftPane.AddLogEntry($"UI refresh rate: {_settings.Settings.UIRefreshIntervalMs}ms ({1000.0 / _settings.Settings.UIRefreshIntervalMs:F1} FPS)");
-		_leftPane.AddLogEntry($"Terminal capabilities: {_consoleManager.GetPlatformInfo()}");
-
 		var refreshInterval = TimeSpan.FromMilliseconds(_settings.Settings.UIRefreshIntervalMs);
 
 		try
 		{
 			// Initial render
 			RenderUI();
+
+			// Check for window too small on startup
+			if (_consoleManager.Width < _consoleManager.MinWidth || _consoleManager.Height < _consoleManager.MinHeight)
+			{
+				await HandleWindowTooSmallAsync(stoppingToken);
+				if (stoppingToken.IsCancellationRequested) return;
+			}
+
+			// Add startup messages only after console is properly sized
+			_leftPane.AddLogEntry($"UI refresh rate: {_settings.Settings.UIRefreshIntervalMs}ms ({1000.0 / _settings.Settings.UIRefreshIntervalMs:F1} FPS)", LogLevel.Information);
+			_leftPane.AddLogEntry($"Terminal capabilities: {_consoleManager.GetPlatformInfo()}", LogLevel.Information);
 
 			// Start UI refresh loop
 			while (!stoppingToken.IsCancellationRequested)
@@ -67,7 +75,16 @@ public class UIManager : BackgroundService
 					{
 						_logger.LogInformation("Console size changed to {Width}x{Height}",
 							_consoleManager.Width, _consoleManager.Height);
-						_leftPane.AddLogEntry($"Console resized to {_consoleManager.Width}x{_consoleManager.Height}");
+
+						// If window became too small, handle it
+						if (_consoleManager.Width < _consoleManager.MinWidth || _consoleManager.Height < _consoleManager.MinHeight)
+						{
+							await HandleWindowTooSmallAsync(stoppingToken);
+							if (stoppingToken.IsCancellationRequested) return;
+							continue;
+						}
+
+						_leftPane.AddLogEntry($"Console resized to {_consoleManager.Width}x{_consoleManager.Height}", LogLevel.Information);
 						_consoleManager.ForceFullRedraw();
 					}
 
@@ -85,7 +102,7 @@ public class UIManager : BackgroundService
 					{
 						var perfStats = _consoleManager.GetPerformanceStats();
 						var avgRenderTime = renderTime.TotalMilliseconds;
-						_leftPane.AddLogEntry($"UI performance: {perfStats}, avg render: {avgRenderTime:F1}ms");
+						_leftPane.AddLogEntry($"UI performance: {perfStats}, avg render: {avgRenderTime:F1}ms", LogLevel.Debug);
 						_lastPerformanceLog = DateTime.Now;
 					}
 
@@ -119,7 +136,7 @@ public class UIManager : BackgroundService
 						{
 							_logger.LogWarning("Render took {ElapsedMs}ms, target is {TargetMs}ms",
 								elapsed.TotalMilliseconds, refreshInterval.TotalMilliseconds);
-							_leftPane.AddLogEntry($"Slow render: {elapsed.TotalMilliseconds:F1}ms (target: {refreshInterval.TotalMilliseconds}ms)");
+							_leftPane.AddLogEntry($"Slow render: {elapsed.TotalMilliseconds:F1}ms (target: {refreshInterval.TotalMilliseconds}ms)", LogLevel.Warning);
 						}
 					}
 				}
@@ -131,7 +148,7 @@ public class UIManager : BackgroundService
 				catch (Exception ex)
 				{
 					_logger.LogError(ex, "Error in UI refresh loop");
-					_leftPane.AddLogEntry($"UI error: {ex.Message}");
+					_leftPane.AddLogEntry($"UI error: {ex.Message}", LogLevel.Error);
 
 					try
 					{
@@ -152,12 +169,50 @@ public class UIManager : BackgroundService
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "Unexpected error in UI Manager");
-			_leftPane.AddLogEntry($"FATAL: UI Manager error - {ex.Message}");
+			_leftPane.AddLogEntry($"FATAL: UI Manager error - {ex.Message}", LogLevel.Error);
 		}
 		finally
 		{
 			_logger.LogInformation("UI Manager stopped gracefully after {RenderCount} renders", _renderCount);
-			_leftPane.AddLogEntry($"UI Manager stopped after {_renderCount} renders");
+			_leftPane.AddLogEntry($"UI Manager stopped after {_renderCount} renders", LogLevel.Information);
+		}
+	}
+
+	/// <summary>
+	/// Handle window too small scenario - wait for user to resize
+	/// </summary>
+	private async Task HandleWindowTooSmallAsync(CancellationToken stoppingToken)
+	{
+		_logger.LogWarning("Console window too small: {Width}x{Height}, minimum: {MinWidth}x{MinHeight}",
+			_consoleManager.Width, _consoleManager.Height, _consoleManager.MinWidth, _consoleManager.MinHeight);
+
+		while (!stoppingToken.IsCancellationRequested)
+		{
+			// Show the "window too small" message
+			_consoleManager.Render();
+
+			// Check for keyboard input (allow exit even when window is too small)
+			if (Console.KeyAvailable)
+			{
+				var key = Console.ReadKey(true);
+				if (key.Key == ConsoleKey.Escape || key.KeyChar == 'q' || key.KeyChar == 'Q')
+				{
+					_hostLifetime.StopApplication();
+					return;
+				}
+			}
+
+			// Wait a bit before checking size again
+			await Task.Delay(500, stoppingToken);
+
+			// Check if window has been resized to acceptable size
+			_consoleManager.CheckForSizeChange();
+			if (_consoleManager.Width >= _consoleManager.MinWidth && _consoleManager.Height >= _consoleManager.MinHeight)
+			{
+				_logger.LogInformation("Console window resized to acceptable size: {Width}x{Height}",
+					_consoleManager.Width, _consoleManager.Height);
+				break;
+			}
 		}
 	}
 

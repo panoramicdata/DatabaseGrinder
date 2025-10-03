@@ -52,44 +52,39 @@ public class RightPane(ConsoleManager consoleManager)
 			var paneWidth = consoleManager.RightPaneWidth;
 			var contentHeight = consoleManager.ContentHeight;
 			var paneStartX = consoleManager.RightPaneStartX;
-			var startY = consoleManager.ContentStartY;
+			var startY = consoleManager.ContentStartY + 1; // +1 to skip separator line
 
-			// Clear right pane content area only
-			for (int y = startY; y < consoleManager.Height; y++)
+			// Clear right pane content area only (content area between global header and footer)
+			for (int y = startY; y < consoleManager.FooterStartY; y++)
 			{
 				var clearLine = new string(' ', paneWidth);
 				consoleManager.WriteAt(paneStartX, y, clearLine);
 			}
 
-			// Draw header with Panoramic Data branding and link
-			DrawHeader(paneStartX, startY, paneWidth);
-
 			// Draw main title
-			var titleY = startY + 2;
 			var title = "REPLICATION MONITOR";
 			var titleX = paneStartX + (paneWidth - title.Length) / 2;
-			consoleManager.WriteAt(titleX, titleY, title, ConsoleColor.White, ConsoleColor.DarkBlue);
+			consoleManager.WriteAt(titleX, startY, title, ConsoleColor.White, ConsoleColor.DarkBlue);
 
 			// Draw overall status summary
 			var statusSummary = GetOverallStatusSummary();
 			var summaryX = paneStartX + (paneWidth - statusSummary.Text.Length) / 2;
-			consoleManager.WriteAt(summaryX, titleY + 1, statusSummary.Text, statusSummary.Color);
+			consoleManager.WriteAt(summaryX, startY + 1, statusSummary.Text, statusSummary.Color);
 
 			// Draw separator line using proper line drawing character
-			var separatorY = titleY + 2;
+			var separatorY = startY + 2;
 			var separator = new string(consoleManager.HorizontalLineChar, paneWidth);
 			consoleManager.WriteAt(paneStartX, separatorY, separator, ConsoleColor.DarkGray);
 
-			// Calculate space for each replica (accounting for header and footer)
-			var headerHeight = 5; // Header (2) + title (1) + status (1) + separator (1)
-			var footerHeight = 3;  // Footer height
-			var availableHeight = contentHeight - headerHeight - footerHeight;
+			// Calculate space for each replica (using available height to footer)
+			var headerHeight = 3; // Title + status + separator
+			var availableHeight = consoleManager.FooterStartY - startY - headerHeight;
 			var linesPerReplica = _replicas.Count > 0 ? Math.Max(6, availableHeight / _replicas.Count) : availableHeight;
 
 			// Draw replica information
 			var currentY = separatorY + 1;
-			var maxY = consoleManager.Height - footerHeight;
-			
+			var maxY = consoleManager.FooterStartY;
+
 			for (int i = 0; i < _replicas.Count && currentY < maxY; i++)
 			{
 				var replica = _replicas[i];
@@ -114,76 +109,9 @@ public class RightPane(ConsoleManager consoleManager)
 			{
 				var noReplicasMsg = "No replicas configured";
 				var msgX = paneStartX + (paneWidth - noReplicasMsg.Length) / 2;
-				var msgY = startY + (availableHeight / 2) + headerHeight;
+				var msgY = startY + (availableHeight / 2);
 				consoleManager.WriteAt(msgX, msgY, noReplicasMsg, ConsoleColor.Yellow);
 			}
-
-			// Draw footer with shortcut keys
-			DrawFooter(paneStartX, paneWidth);
-		}
-	}
-
-	/// <summary>
-	/// Draw the header with Panoramic Data branding and website link
-	/// </summary>
-	private void DrawHeader(int startX, int startY, int width)
-	{
-		// Line 1: Panoramic Data logo and branding
-		var logoText = GetPanoramicDataLogo();
-		var logoX = startX + (width - logoText.Length) / 2;
-		
-		// Draw with orange background for logo portion
-		for (int i = 0; i < logoText.Length && logoX + i < startX + width; i++)
-		{
-			var ch = logoText[i];
-			var fg = ConsoleColor.White;
-			var bg = ConsoleColor.DarkYellow; // Orange-ish background
-			consoleManager.WriteAt(logoX + i, startY, ch.ToString(), fg, bg);
-		}
-
-		// Line 2: Website link
-		var website = "https://panoramicdata.com/";
-		var websiteX = startX + (width - website.Length) / 2;
-		consoleManager.WriteAt(websiteX, startY + 1, website, ConsoleColor.Cyan, ConsoleColor.Black);
-	}
-
-	/// <summary>
-	/// Draw the footer with available shortcut keys
-	/// </summary>
-	private void DrawFooter(int startX, int width)
-	{
-		var footerStartY = consoleManager.Height - 3;
-
-		// Draw separator line above footer
-		var separator = new string(consoleManager.HorizontalLineChar, width);
-		consoleManager.WriteAt(startX, footerStartY, separator, ConsoleColor.DarkGray);
-
-		// Line 1: Primary shortcuts
-		var shortcuts1 = "q=quit  Ctrl+Q=cleanup  r=refresh";
-		var shortcut1X = startX + (width - shortcuts1.Length) / 2;
-		consoleManager.WriteAt(shortcut1X, footerStartY + 1, shortcuts1, ConsoleColor.Gray);
-
-		// Line 2: Secondary shortcuts  
-		var shortcuts2 = "h=help  F1=help  F5=refresh  F12=stats";
-		var shortcut2X = startX + (width - shortcuts2.Length) / 2;
-		consoleManager.WriteAt(shortcut2X, footerStartY + 2, shortcuts2, ConsoleColor.DarkGray);
-	}
-
-	/// <summary>
-	/// Get the Panoramic Data logo text with Unicode character if supported
-	/// </summary>
-	private string GetPanoramicDataLogo()
-	{
-		// Try Unicode logo first, fallback to text-only
-		try
-		{
-			const string nkoChar = "ߝ"; // Unicode Nko letter FA
-			return $"{nkoChar} panoramic data";
-		}
-		catch
-		{
-			// Fallback without Unicode character
-			return "panoramic data";
 		}
 	}
 
@@ -351,6 +279,7 @@ public class RightPane(ConsoleManager consoleManager)
 			{
 				sequences += "...";
 			}
+
 			return $"# Missing: {sequences} ({replica.MissingSequenceCount} total)";
 		}
 
