@@ -13,7 +13,7 @@ public class DatabaseGrinderSettings
 	/// <summary>
 	/// List of replica database connections to monitor
 	/// </summary>
-	public List<ReplicaConnectionSettings> ReplicaConnections { get; set; } = new();
+	public List<ReplicaConnectionSettings> ReplicaConnections { get; set; } = [];
 
 	/// <summary>
 	/// Database management and setup configuration

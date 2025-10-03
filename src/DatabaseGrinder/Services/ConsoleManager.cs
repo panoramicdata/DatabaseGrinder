@@ -12,12 +12,9 @@ public struct ConsoleCell(char character, ConsoleColor foreground = ConsoleColor
 	public ConsoleColor Foreground { get; set; } = foreground;
 	public ConsoleColor Background { get; set; } = background;
 
-	public bool Equals(ConsoleCell other)
-	{
-		return Character == other.Character &&
+	public readonly bool Equals(ConsoleCell other) => Character == other.Character &&
 			   Foreground == other.Foreground &&
 			   Background == other.Background;
-	}
 }
 
 /// <summary>
@@ -29,7 +26,7 @@ public static class LineChars
 	public static class Unicode
 	{
 		public const char VerticalLine = '│';       // ┃ for thick
-		public const char HorizontalLine = '─';     // ━ for thick  
+		public const char HorizontalLine = '─';     // ━ for thick
 		public const char TopLeft = '┌';
 		public const char TopRight = '┐';
 		public const char BottomLeft = '└';
@@ -84,7 +81,7 @@ public static class LineChars
 /// <param name="minHeight">Minimum console height to support</param>
 public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 {
-	private readonly object _lockObject = new object();
+	private readonly object _lockObject = new();
 	private int _currentWidth;
 	private int _currentHeight;
 	private bool _isInitialized;
@@ -95,7 +92,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 	private bool _supportsExtendedAscii = true;
 
 	// Performance optimization: reuse StringBuilder for clearing lines
-	private readonly StringBuilder _clearLineBuilder = new StringBuilder();
+	private readonly StringBuilder _clearLineBuilder = new();
 
 	// Performance tracking
 	private int _totalRenderCalls = 0;
@@ -167,29 +164,26 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 	/// <summary>
 	/// Get the appropriate vertical line character for the current terminal
 	/// </summary>
-	public char VerticalLineChar => _supportsUnicode ? LineChars.Unicode.VerticalLine : 
-	                               _supportsExtendedAscii ? LineChars.ExtendedAscii.VerticalLine : 
-	                               LineChars.Ascii.VerticalLine;
+	public char VerticalLineChar => _supportsUnicode ? LineChars.Unicode.VerticalLine :
+								   _supportsExtendedAscii ? LineChars.ExtendedAscii.VerticalLine :
+								   LineChars.Ascii.VerticalLine;
 
 	/// <summary>
 	/// Get the appropriate horizontal line character for the current terminal
 	/// </summary>
-	public char HorizontalLineChar => _supportsUnicode ? LineChars.Unicode.HorizontalLine : 
-	                                 _supportsExtendedAscii ? LineChars.ExtendedAscii.HorizontalLine : 
-	                                 LineChars.Ascii.HorizontalLine;
+	public char HorizontalLineChar => _supportsUnicode ? LineChars.Unicode.HorizontalLine :
+									 _supportsExtendedAscii ? LineChars.ExtendedAscii.HorizontalLine :
+									 LineChars.Ascii.HorizontalLine;
 
 	/// <summary>
 	/// Get detailed layout information for debugging
 	/// </summary>
 	/// <returns>Layout information string</returns>
-	public string GetLayoutInfo()
-	{
-		return $"Console: {_currentWidth}x{_currentHeight}, " +
-		       $"Content: {_currentWidth}x{ContentHeight} (starts at Y:{ContentStartY}), " +
-		       $"Left: 0-{LeftPaneWidth - 1} ({LeftPaneWidth} chars), " +
-		       $"Sep: {SeparatorX}, " +
-		       $"Right: {RightPaneStartX}-{_currentWidth - 1} ({RightPaneWidth} chars)";
-	}
+	public string GetLayoutInfo() => $"Console: {_currentWidth}x{_currentHeight}, " +
+			   $"Content: {_currentWidth}x{ContentHeight} (starts at Y:{ContentStartY}), " +
+			   $"Left: 0-{LeftPaneWidth - 1} ({LeftPaneWidth} chars), " +
+			   $"Sep: {SeparatorX}, " +
+			   $"Right: {RightPaneStartX}-{_currentWidth - 1} ({RightPaneWidth} chars)";
 
 	/// <summary>
 	/// Initialize the console and start monitoring for size changes
@@ -245,8 +239,8 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 			var termProgram = Environment.GetEnvironmentVariable("TERM_PROGRAM");
 
 			// Windows Terminal, modern terminals generally support Unicode
-			if (termProgram == "vscode" || termProgram == "Windows Terminal" || 
-			    term?.Contains("xterm") == true || term?.Contains("screen") == true)
+			if (termProgram == "vscode" || termProgram == "Windows Terminal" ||
+				term?.Contains("xterm") == true || term?.Contains("screen") == true)
 			{
 				_supportsUnicode = true;
 				_supportsExtendedAscii = true;
@@ -305,7 +299,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 
 			// Create branding text with logo
 			var brandText = GetBrandingText();
-			
+
 			// Draw branding with orange background for the logo part
 			var brandingX = 0;
 			for (int i = 0; i < brandText.Length && brandingX < _currentWidth; i++)
@@ -313,7 +307,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 				var ch = brandText[i];
 				var fg = ConsoleColor.White;
 				var bg = ConsoleColor.DarkYellow; // Orange-ish background
-				
+
 				// After "panoramic data", use normal colors
 				if (i >= GetLogoLength())
 				{
@@ -326,7 +320,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 			}
 
 			// Add keyboard shortcuts on the right side if there's space
-			var shortcuts = " [q=quit r=refresh h=help]";
+			var shortcuts = " [q=quit Ctrl+Q=cleanup r=refresh h=help]";
 			var shortcutsStartX = _currentWidth - shortcuts.Length;
 			if (shortcutsStartX > brandingX + 2) // Leave at least 2 spaces gap
 			{
@@ -353,7 +347,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 	private string GetBrandingText()
 	{
 		const string nkoChar = "ߝ"; // Unicode Nko letter FA
-		
+
 		if (_supportsUnicode)
 		{
 			// Try Unicode logo first
@@ -366,7 +360,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 				// Fallback if Unicode char fails
 			}
 		}
-		
+
 		// Fallback without logo character
 		return "panoramic data  DatabaseGrinder v1.1.0";
 	}
@@ -374,10 +368,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 	/// <summary>
 	/// Get the length of the logo portion (for background coloring)
 	/// </summary>
-	private int GetLogoLength()
-	{
-		return _supportsUnicode ? "ߝ panoramic data".Length : "panoramic data".Length;
-	}
+	private int GetLogoLength() => _supportsUnicode ? "ߝ panoramic data".Length : "panoramic data".Length;
 
 	/// <summary>
 	/// Check for console size changes and update if needed
@@ -710,7 +701,7 @@ public class ConsoleManager(int minWidth = 20, int minHeight = 20)
 				var maxLength = _currentWidth - x;
 				if (text.Length > maxLength)
 				{
-					text = text.Substring(0, maxLength);
+					text = text[..maxLength];
 				}
 
 				Console.Write(text);

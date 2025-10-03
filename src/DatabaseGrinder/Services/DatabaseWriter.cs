@@ -78,69 +78,107 @@ public class DatabaseWriter : BackgroundService
 	{
 		_logger.LogInformation("DatabaseWriter started - writing every {IntervalMs}ms with sequence tracking",
 			_settings.Settings.WriteIntervalMs);
-		_leftPane.AddLogEntry("DatabaseWriter service started with sequence tracking", LogLevel.Information);
+		_leftPane.AddLogEntry("DatabaseWriter service started with sequence tracking");
 
-		// Initialize sequence number from database
-		await InitializeSequenceNumberAsync(stoppingToken);
-
-		var writeInterval = TimeSpan.FromMilliseconds(_settings.Settings.WriteIntervalMs);
-		var statsUpdateInterval = TimeSpan.FromSeconds(1);
-		var lastStatsUpdate = DateTime.Now;
-
-		while (!stoppingToken.IsCancellationRequested)
+		try
 		{
-			var startTime = DateTime.Now;
+			// Initialize sequence number from database
+			await InitializeSequenceNumberAsync(stoppingToken);
 
-			try
+			var writeInterval = TimeSpan.FromMilliseconds(_settings.Settings.WriteIntervalMs);
+			var statsUpdateInterval = TimeSpan.FromSeconds(1);
+			var lastStatsUpdate = DateTime.Now;
+
+			while (!stoppingToken.IsCancellationRequested)
 			{
-				// Write a new record
-				await WriteRecordAsync(stoppingToken);
+				var startTime = DateTime.Now;
 
-				// Update statistics
-				_statistics.TotalRecords++;
-				_statistics.LastWriteTime = DateTime.Now;
-				_statistics.IsConnected = true;
-				_statistics.CurrentSequenceNumber = _sequenceNumber;
-
-				// Add to recent writes for rate calculation
-				_recentWrites.Enqueue(DateTime.Now);
-
-				// Update UI with successful write
-				_leftPane.AddLogEntry($"Record #{_statistics.TotalRecords} (seq:{_sequenceNumber}) inserted successfully", LogLevel.Information);
-
-				// Update statistics display periodically
-				if (DateTime.Now - lastStatsUpdate >= statsUpdateInterval)
+				try
 				{
-					UpdateStatistics();
-					lastStatsUpdate = DateTime.Now;
+					// Write a new record
+					await WriteRecordAsync(stoppingToken);
+
+					// Update statistics
+					_statistics.TotalRecords++;
+					_statistics.LastWriteTime = DateTime.Now;
+					_statistics.IsConnected = true;
+					_statistics.CurrentSequenceNumber = _sequenceNumber;
+
+					// Add to recent writes for rate calculation
+					_recentWrites.Enqueue(DateTime.Now);
+
+					// Update UI with successful write (only log occasionally to avoid spam)
+					if (_statistics.TotalRecords % 10 == 0 || _statistics.TotalRecords < 10)
+					{
+						_leftPane.AddLogEntry($"Record #{_statistics.TotalRecords} (seq:{_sequenceNumber}) inserted successfully");
+					}
+
+					// Update statistics display periodically
+					if (DateTime.Now - lastStatsUpdate >= statsUpdateInterval)
+					{
+						UpdateStatistics();
+						lastStatsUpdate = DateTime.Now;
+					}
+				}
+				catch (OperationCanceledException)
+				{
+					// Expected when stopping - break out of the loop
+					break;
+				}
+				catch (Exception ex)
+				{
+					_statistics.ErrorCount++;
+					_statistics.LastError = ex.Message;
+					_statistics.IsConnected = false;
+
+					_logger.LogError(ex, "Failed to write record to database");
+					_leftPane.AddLogEntry($"ERROR: Write failed - {ex.Message}");
+
+					// Wait longer on error before retrying, but respect cancellation
+					try
+					{
+						await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+					}
+					catch (OperationCanceledException)
+					{
+						break;
+					}
+					continue;
+				}
+
+				// Calculate how long to wait for the next write
+				var elapsed = DateTime.Now - startTime;
+				var remainingTime = writeInterval - elapsed;
+
+				if (remainingTime > TimeSpan.Zero)
+				{
+					try
+					{
+						await Task.Delay(remainingTime, stoppingToken);
+					}
+					catch (OperationCanceledException)
+					{
+						// Expected when stopping - break out of the loop
+						break;
+					}
 				}
 			}
-			catch (Exception ex)
-			{
-				_statistics.ErrorCount++;
-				_statistics.LastError = ex.Message;
-				_statistics.IsConnected = false;
-
-				_logger.LogError(ex, "Failed to write record to database");
-				_leftPane.AddLogEntry($"ERROR: Write failed - {ex.Message}", LogLevel.Error);
-
-				// Wait longer on error before retrying
-				await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
-				continue;
-			}
-
-			// Calculate how long to wait for the next write
-			var elapsed = DateTime.Now - startTime;
-			var remainingTime = writeInterval - elapsed;
-
-			if (remainingTime > TimeSpan.Zero)
-			{
-				await Task.Delay(remainingTime, stoppingToken);
-			}
 		}
-
-		_logger.LogInformation("DatabaseWriter stopped");
-		_leftPane.AddLogEntry("DatabaseWriter service stopped", LogLevel.Warning);
+		catch (OperationCanceledException)
+		{
+			// Expected during shutdown
+			_logger.LogInformation("DatabaseWriter cancellation requested");
+		}
+		catch (Exception ex)
+		{
+			_logger.LogError(ex, "Unexpected error in DatabaseWriter");
+			_leftPane.AddLogEntry($"FATAL: DatabaseWriter error - {ex.Message}");
+		}
+		finally
+		{
+			_logger.LogInformation("DatabaseWriter stopped gracefully");
+			_leftPane.AddLogEntry("DatabaseWriter service stopped");
+		}
 	}
 
 	/// <summary>
@@ -153,17 +191,24 @@ public class DatabaseWriter : BackgroundService
 			using var scope = _serviceProvider.CreateScope();
 			var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
 
-			// Get the highest sequence number from existing records
+			// Since table is truncated on startup, we can start from 0
+			// But check if there are any existing records (in case truncation was skipped)
 			var maxSequence = await context.TestRecords
 				.MaxAsync(r => (long?)r.SequenceNumber, cancellationToken);
 
 			_sequenceNumber = maxSequence ?? 0;
 			_logger.LogInformation("Initialized sequence number to {SequenceNumber}", _sequenceNumber);
-			_leftPane.AddLogEntry($"Sequence number initialized to {_sequenceNumber}", LogLevel.Information);
+			_leftPane.AddLogEntry($"Sequence number initialized to {_sequenceNumber}");
+		}
+		catch (OperationCanceledException)
+		{
+			_logger.LogInformation("Sequence number initialization cancelled");
+			throw; // Re-throw to stop execution
 		}
 		catch (Exception ex)
 		{
-			_logger.LogWarning(ex, "Failed to initialize sequence number, starting from 0");
+			_logger.LogWarning(ex, "Failed to initialize sequence number, starting from 0 (table should be empty)");
+			_leftPane.AddLogEntry($"Failed to initialize sequence number: {ex.Message}");
 			_sequenceNumber = 0;
 		}
 	}
@@ -206,7 +251,7 @@ public class DatabaseWriter : BackgroundService
 
 		// Update UI with current statistics
 		var statsMessage = $"Stats: {_statistics.RecordsPerSecond}/sec | Total: {_statistics.TotalRecords} | Seq: {_statistics.CurrentSequenceNumber} | Errors: {_statistics.ErrorCount} | Up: {_statistics.UpTime:hh\\:mm\\:ss}";
-		_leftPane.AddLogEntry(statsMessage, LogLevel.Information);
+		_leftPane.AddLogEntry(statsMessage);
 	}
 
 	/// <summary>
@@ -231,13 +276,13 @@ public class DatabaseWriter : BackgroundService
 				await context.SaveChangesAsync();
 
 				_logger.LogInformation("Cleaned up {Count} old records older than {CutoffTime}", oldRecords.Count, cutoffTime);
-				_leftPane.AddLogEntry($"Cleaned up {oldRecords.Count} old records", LogLevel.Information);
+				_leftPane.AddLogEntry($"Cleaned up {oldRecords.Count} old records");
 			}
 		}
 		catch (Exception ex)
 		{
 			_logger.LogError(ex, "Failed to cleanup old records");
-			_leftPane.AddLogEntry($"Cleanup failed: {ex.Message}", LogLevel.Warning);
+			_leftPane.AddLogEntry($"Cleanup failed: {ex.Message}");
 		}
 	}
 
@@ -248,5 +293,7 @@ public class DatabaseWriter : BackgroundService
 	{
 		_cleanupTimer?.Dispose();
 		base.Dispose();
+
+		GC.SuppressFinalize(this);
 	}
 }

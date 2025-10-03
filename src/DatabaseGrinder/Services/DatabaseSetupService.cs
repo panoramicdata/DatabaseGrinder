@@ -1,7 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Npgsql;
-using System.Text;
 using DatabaseGrinder.Configuration;
 
 namespace DatabaseGrinder.Services;

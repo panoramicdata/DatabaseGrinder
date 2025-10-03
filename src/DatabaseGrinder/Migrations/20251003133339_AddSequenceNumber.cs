@@ -8,21 +8,15 @@ namespace DatabaseGrinder.Migrations;
 public partial class AddSequenceNumber : Migration
 {
 	/// <inheritdoc />
-	protected override void Up(MigrationBuilder migrationBuilder)
-	{
-		migrationBuilder.AddColumn<long>(
+	protected override void Up(MigrationBuilder migrationBuilder) => migrationBuilder.AddColumn<long>(
 			name: "SequenceNumber",
 			table: "test_records",
 			type: "bigint",
 			nullable: false,
 			defaultValue: 0L);
-	}
 
 	/// <inheritdoc />
-	protected override void Down(MigrationBuilder migrationBuilder)
-	{
-		migrationBuilder.DropColumn(
+	protected override void Down(MigrationBuilder migrationBuilder) => migrationBuilder.DropColumn(
 			name: "SequenceNumber",
 			table: "test_records");
-	}
 }

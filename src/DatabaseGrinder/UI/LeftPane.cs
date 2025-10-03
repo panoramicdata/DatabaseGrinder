@@ -64,7 +64,7 @@ public class LeftPane
 	{
 		lock (_lockObject)
 		{
-			_connectionStatus = $"Status: {status}";
+			_connectionStatus = status;
 			_statusColor = isConnected ? ConsoleColor.Green : ConsoleColor.Red;
 		}
 	}
@@ -91,29 +91,34 @@ public class LeftPane
 				_consoleManager.WriteAt(0, y, clearLine);
 			}
 
-			// Draw header
+			// Draw header with DatabaseGrinder branding
+			DrawHeader(0, startY, paneWidth);
+
+			// Draw main title
+			var titleY = startY + 2;
 			var header = "DATABASE WRITER";
 			var headerX = Math.Max(0, (paneWidth - header.Length) / 2);
 			if (header.Length <= paneWidth)
 			{
-				_consoleManager.WriteAt(headerX, startY, header, ConsoleColor.White, ConsoleColor.Blue);
+				_consoleManager.WriteAt(headerX, titleY, header, ConsoleColor.White, ConsoleColor.Blue);
 			}
 			else
 			{
 				// Truncate header if too long
 				var truncatedHeader = header.Length > paneWidth - 3 ? header.Substring(0, paneWidth - 3) + "..." : header;
-				_consoleManager.WriteAt(0, startY, truncatedHeader, ConsoleColor.White, ConsoleColor.Blue);
+				_consoleManager.WriteAt(0, titleY, truncatedHeader, ConsoleColor.White, ConsoleColor.Blue);
 			}
 
 			// Draw separator line using proper line drawing character
-			var separatorY = startY + 1;
+			var separatorY = titleY + 1;
 			var separator = new string(_consoleManager.HorizontalLineChar, paneWidth);
 			_consoleManager.WriteAt(0, separatorY, separator, ConsoleColor.DarkGray);
 
-			// Calculate available space for log entries
+			// Calculate available space for log entries (accounting for header and footer)
+			var headerHeight = 4; // Header (2) + title (1) + separator (1)
+			var footerHeight = 4; // Connection status + stats + separator + shortcuts
 			var logStartY = separatorY + 1;
-			var reservedBottomLines = contentHeight > 5 ? 3 : 0; // Reserve space for stats if height allows
-			var availableLines = Math.Max(0, contentHeight - 2 - reservedBottomLines); // -2 for header and separator
+			var availableLines = Math.Max(0, contentHeight - headerHeight - footerHeight);
 			var linesToShow = Math.Min(_logLines.Count, availableLines);
 
 			// Draw log entries
@@ -131,22 +136,64 @@ public class LeftPane
 				}
 			}
 
-			// Draw statistics at the bottom if there's space
-			if (contentHeight > 5)
-			{
-				var statsY = _consoleManager.Height - 3;
-				var statsLine = new string(_consoleManager.HorizontalLineChar, paneWidth);
-				_consoleManager.WriteAt(0, statsY, statsLine, ConsoleColor.DarkGray);
+			// Draw footer with status and shortcuts
+			DrawFooter(0, paneWidth);
+		}
+	}
 
-				// Connection status
-				var statusText = TruncateText(_connectionStatus, paneWidth);
-				_consoleManager.WriteAt(0, statsY + 1, statusText, _statusColor);
+	/// <summary>
+	/// Draw the header with DatabaseGrinder branding
+	/// </summary>
+	private void DrawHeader(int startX, int startY, int width)
+	{
+		// Line 1: DatabaseGrinder logo
+		var logoText = "DatabaseGrinder v1.1.0";
+		var logoX = startX + (width - logoText.Length) / 2;
+		
+		// Draw with blue background for branding
+		for (int i = 0; i < logoText.Length && logoX + i < startX + width; i++)
+		{
+			var ch = logoText[i];
+			var fg = ConsoleColor.White;
+			var bg = ConsoleColor.DarkBlue;
+			_consoleManager.WriteAt(logoX + i, startY, ch.ToString(), fg, bg);
+		}
 
-				// Total entries
-				var totalEntries = $"Log Entries: {_logLines.Count}";
-				var entriesText = TruncateText(totalEntries, paneWidth);
-				_consoleManager.WriteAt(0, statsY + 2, entriesText, ConsoleColor.Cyan);
-			}
+		// Line 2: Description
+		var description = "Database Replication Monitor";
+		var descX = startX + (width - description.Length) / 2;
+		if (descX >= 0 && description.Length <= width)
+		{
+			_consoleManager.WriteAt(descX, startY + 1, description, ConsoleColor.Cyan, ConsoleColor.Black);
+		}
+	}
+
+	/// <summary>
+	/// Draw the footer with connection status and controls
+	/// </summary>
+	private void DrawFooter(int startX, int width)
+	{
+		var footerStartY = _consoleManager.Height - 4;
+
+		// Draw separator line above footer
+		var separator = new string(_consoleManager.HorizontalLineChar, width);
+		_consoleManager.WriteAt(startX, footerStartY, separator, ConsoleColor.DarkGray);
+
+		// Line 1: Connection status
+		var statusText = TruncateText($"Status: {_connectionStatus}", width);
+		_consoleManager.WriteAt(startX, footerStartY + 1, statusText, _statusColor);
+
+		// Line 2: Log entries count
+		var totalEntries = $"Log Entries: {_logLines.Count}";
+		var entriesText = TruncateText(totalEntries, width);
+		_consoleManager.WriteAt(startX, footerStartY + 2, entriesText, ConsoleColor.Cyan);
+
+		// Line 3: Quick shortcuts (compact version)
+		var shortcuts = "ESC=exit Ctrl+Q=cleanup";
+		if (shortcuts.Length <= width)
+		{
+			var shortcutX = startX + (width - shortcuts.Length) / 2;
+			_consoleManager.WriteAt(shortcutX, footerStartY + 3, shortcuts, ConsoleColor.DarkGray);
 		}
 	}
 
@@ -179,7 +226,7 @@ public class LeftPane
 	private void UpdateMaxLines()
 	{
 		// Calculate maximum lines based on content height
-		var displayLines = Math.Max(1, _consoleManager.ContentHeight - 5); // Minimum 1 line for display
+		var displayLines = Math.Max(1, _consoleManager.ContentHeight - 8); // Account for header and footer
 		_maxLines = Math.Max(displayLines * 5, 50); // Keep 5x display capacity or minimum 50 lines
 	}
 

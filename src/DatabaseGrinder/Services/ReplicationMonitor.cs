@@ -28,7 +28,7 @@ public class ReplicaStatistics
 	public long? SequenceLag { get; set; }
 	public int MissingSequenceCount { get; set; }
 	public int PreviousMissingCount { get; set; }
-	public List<long> MissingSequences { get; set; } = new();
+	public List<long> MissingSequences { get; set; } = [];
 	public string? ErrorMessage { get; set; }
 	public int ConsecutiveErrors { get; set; }
 	public TimeSpan ResponseTime { get; set; }
@@ -64,7 +64,7 @@ public class ReplicationMonitor(
 	{
 		_logger.LogInformation("ReplicationMonitor started - monitoring {ReplicaCount} replicas with sequence gap detection",
 			_settings.ReplicaConnections.Count);
-		_leftPane.AddLogEntry("Replication monitor started with sequence tracking", LogLevel.Information);
+		_leftPane.AddLogEntry("Replication monitor started with sequence tracking");
 
 		// Initialize replica statistics
 		foreach (var replica in _settings.ReplicaConnections)
@@ -84,7 +84,7 @@ public class ReplicationMonitor(
 			_monitoringTasks[replica.Name] = monitoringTask;
 		}
 
-		_leftPane.AddLogEntry($"Started monitoring {_settings.ReplicaConnections.Count} replica(s)", LogLevel.Information);
+		_leftPane.AddLogEntry($"Started monitoring {_settings.ReplicaConnections.Count} replica(s)");
 
 		// Wait for all monitoring tasks to complete
 		try
@@ -97,7 +97,7 @@ public class ReplicationMonitor(
 		}
 
 		_logger.LogInformation("ReplicationMonitor stopped");
-		_leftPane.AddLogEntry("Replication monitor stopped", LogLevel.Warning);
+		_leftPane.AddLogEntry("Replication monitor stopped");
 	}
 
 	/// <summary>
@@ -110,7 +110,7 @@ public class ReplicationMonitor(
 		var maxRetryDelay = TimeSpan.FromSeconds(30);
 
 		_logger.LogInformation("Starting monitor for replica: {ReplicaName}", replica.Name);
-		_leftPane.AddLogEntry($"Starting monitor for {replica.Name}", LogLevel.Information);
+		_leftPane.AddLogEntry($"Starting monitor for {replica.Name}");
 
 		while (!stoppingToken.IsCancellationRequested)
 		{
@@ -145,8 +145,9 @@ public class ReplicationMonitor(
 				// Reset error count on success
 				if (stats.ConsecutiveErrors > 0)
 				{
-					_leftPane.AddLogEntry($"{replica.Name} connection restored", LogLevel.Information);
+					_leftPane.AddLogEntry($"{replica.Name} connection restored");
 				}
+
 				stats.ConsecutiveErrors = 0;
 				stats.LastSuccessfulCheck = DateTime.Now;
 				stats.ResponseTime = DateTime.Now - startTime;
@@ -156,7 +157,15 @@ public class ReplicationMonitor(
 				var remainingTime = checkInterval - elapsed;
 				if (remainingTime > TimeSpan.Zero)
 				{
-					await Task.Delay(remainingTime, stoppingToken);
+					try
+					{
+						await Task.Delay(remainingTime, stoppingToken);
+					}
+					catch (OperationCanceledException)
+					{
+						// Expected when stopping
+						break;
+					}
 				}
 			}
 			catch (OperationCanceledException)
@@ -176,7 +185,7 @@ public class ReplicationMonitor(
 				// Only log to UI on first error or every 10th consecutive error to avoid spam
 				if (stats.ConsecutiveErrors == 1 || stats.ConsecutiveErrors % 10 == 0)
 				{
-					_leftPane.AddLogEntry($"{replica.Name} error (attempt {stats.ConsecutiveErrors}): {ex.Message}", LogLevel.Error);
+					_leftPane.AddLogEntry($"{replica.Name} error (attempt {stats.ConsecutiveErrors}): {ex.Message}");
 				}
 
 				// Update UI with error
@@ -184,12 +193,20 @@ public class ReplicationMonitor(
 
 				// Progressive backoff on consecutive errors
 				var retryDelay = TimeSpan.FromSeconds(Math.Min(5 * stats.ConsecutiveErrors, maxRetryDelay.TotalSeconds));
-				await Task.Delay(retryDelay, stoppingToken);
+				try
+				{
+					await Task.Delay(retryDelay, stoppingToken);
+				}
+				catch (OperationCanceledException)
+				{
+					// Expected when stopping
+					break;
+				}
 			}
 		}
 
 		_logger.LogInformation("Monitor stopped for replica: {ReplicaName}", replica.Name);
-		_leftPane.AddLogEntry($"Monitor stopped for {replica.Name}", LogLevel.Warning);
+		_leftPane.AddLogEntry($"Monitor stopped for {replica.Name}");
 	}
 
 	/// <summary>
@@ -271,12 +288,12 @@ public class ReplicationMonitor(
 			// Log significant missing sequences to UI (only when count changes)
 			if (stats.MissingSequenceCount > 0 && stats.MissingSequenceCount != stats.PreviousMissingCount)
 			{
-				_leftPane.AddLogEntry($"{replica.Name} has {stats.MissingSequenceCount} missing sequences", LogLevel.Warning);
+				_leftPane.AddLogEntry($"{replica.Name} has {stats.MissingSequenceCount} missing sequences");
 				stats.PreviousMissingCount = stats.MissingSequenceCount;
 			}
 			else if (stats.MissingSequenceCount == 0 && stats.PreviousMissingCount > 0)
 			{
-				_leftPane.AddLogEntry($"{replica.Name} missing sequences resolved", LogLevel.Information);
+				_leftPane.AddLogEntry($"{replica.Name} missing sequences resolved");
 				stats.PreviousMissingCount = 0;
 			}
 		}
@@ -309,7 +326,7 @@ public class ReplicationMonitor(
 				}
 			}
 
-			stats.MissingSequences = missingSequences.Take(10).ToList(); // Keep only first 10 for display
+			stats.MissingSequences = [.. missingSequences.Take(10)]; // Keep only first 10 for display
 			stats.MissingSequenceCount = missingSequences.Count;
 		}
 		catch (Exception ex)
@@ -367,6 +384,7 @@ public class ReplicationMonitor(
 							? TimeSpan.FromMilliseconds((summary.AverageTimeLag.Value.TotalMilliseconds + stats.TimeLag.Value.TotalMilliseconds) / 2)
 							: stats.TimeLag.Value;
 					}
+
 					break;
 				case ConnectionStatus.Error:
 					summary.ErrorReplicas++;
@@ -379,20 +397,4 @@ public class ReplicationMonitor(
 
 		return summary;
 	}
-}
-
-/// <summary>
-/// Summary of replication status across all replicas
-/// </summary>
-public class ReplicationSummary
-{
-	public int TotalReplicas { get; set; }
-	public int ConnectedReplicas { get; set; }
-	public int DisconnectedReplicas { get; set; }
-	public int ErrorReplicas { get; set; }
-	public TimeSpan? MaxTimeLag { get; set; }
-	public TimeSpan? AverageTimeLag { get; set; }
-
-	public bool AllReplicasHealthy => ConnectedReplicas == TotalReplicas;
-	public bool HasCriticalLag => MaxTimeLag.HasValue && MaxTimeLag.Value.TotalSeconds > 10;
 }
