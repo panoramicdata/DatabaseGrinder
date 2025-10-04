@@ -190,6 +190,9 @@ public class DatabaseWriter : BackgroundService
 		{
 			using var scope = _serviceProvider.CreateScope();
 			var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+			
+			// Set the schema name in the context
+			context.SetSchemaName(_settings.DatabaseManagement.SchemaName);
 
 			// Since table is truncated on startup, we can start from 0
 			// But check if there are any existing records (in case truncation was skipped)
@@ -197,7 +200,7 @@ public class DatabaseWriter : BackgroundService
 				.MaxAsync(r => (long?)r.SequenceNumber, cancellationToken);
 
 			_sequenceNumber = maxSequence ?? 0;
-			_logger.LogInformation("Initialized sequence number to {SequenceNumber}", _sequenceNumber);
+			_logger.LogInformation("Initialized sequence number to {SequenceNumber} in schema '{SchemaName}'", _sequenceNumber, _settings.DatabaseManagement.SchemaName);
 			_leftPane.AddLogEntry($"Sequence number initialized to {_sequenceNumber}");
 		}
 		catch (OperationCanceledException)
@@ -220,6 +223,9 @@ public class DatabaseWriter : BackgroundService
 	{
 		using var scope = _serviceProvider.CreateScope();
 		var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+		
+		// Set the schema name in the context
+		context.SetSchemaName(_settings.DatabaseManagement.SchemaName);
 
 		// Increment sequence number
 		var currentSequence = Interlocked.Increment(ref _sequenceNumber);
@@ -229,8 +235,8 @@ public class DatabaseWriter : BackgroundService
 		context.TestRecords.Add(record);
 		await context.SaveChangesAsync(cancellationToken);
 
-		_logger.LogDebug("Inserted record with ID {RecordId}, Sequence {SequenceNumber} at {Timestamp}",
-			record.Id, record.SequenceNumber, record.Timestamp);
+		_logger.LogDebug("Inserted record with ID {RecordId}, Sequence {SequenceNumber} at {Timestamp} in schema '{SchemaName}'",
+			record.Id, record.SequenceNumber, record.Timestamp, _settings.DatabaseManagement.SchemaName);
 	}
 
 	/// <summary>
@@ -263,6 +269,9 @@ public class DatabaseWriter : BackgroundService
 		{
 			using var scope = _serviceProvider.CreateScope();
 			var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+			
+			// Set the schema name in the context
+			context.SetSchemaName(_settings.DatabaseManagement.SchemaName);
 
 			var cutoffTime = DateTime.UtcNow.AddMinutes(-_settings.Settings.DataRetentionMinutes);
 
@@ -275,7 +284,7 @@ public class DatabaseWriter : BackgroundService
 				context.TestRecords.RemoveRange(oldRecords);
 				await context.SaveChangesAsync();
 
-				_logger.LogInformation("Cleaned up {Count} old records older than {CutoffTime}", oldRecords.Count, cutoffTime);
+				_logger.LogInformation("Cleaned up {Count} old records older than {CutoffTime} from schema '{SchemaName}'", oldRecords.Count, cutoffTime, _settings.DatabaseManagement.SchemaName);
 				_leftPane.AddLogEntry($"Cleaned up {oldRecords.Count} old records");
 			}
 		}

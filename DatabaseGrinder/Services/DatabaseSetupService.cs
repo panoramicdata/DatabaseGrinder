@@ -6,7 +6,7 @@ using DatabaseGrinder.Configuration;
 namespace DatabaseGrinder.Services;
 
 /// <summary>
-/// Service responsible for setting up the database, users, and permissions
+/// Service responsible for setting up the database schema, users, and permissions
 /// </summary>
 public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions<DatabaseGrinderSettings> settings)
 {
@@ -14,7 +14,7 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
     private readonly DatabaseGrinderSettings _settings = settings.Value;
 
 	/// <summary>
-	/// Perform complete database setup including database creation, user management, and permissions
+	/// Perform complete database setup including schema creation, user management, and permissions
 	/// </summary>
 	/// <param name="cancellationToken">Cancellation token</param>
 	/// <returns>True if setup was successful</returns>
@@ -22,21 +22,21 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
     {
         try
         {
-            _logger.LogInformation("Starting database setup process...");
+            _logger.LogInformation("Starting database setup process for schema '{SchemaName}'...", _settings.DatabaseManagement.SchemaName);
 
-            // Step 1: Validate superuser connection
+            // Step 1: Validate connection to target database
             if (!await ValidateConnectionAsync(_settings.PrimaryConnection.ConnectionString, cancellationToken))
             {
-                _logger.LogError("Failed to validate superuser connection");
+                _logger.LogError("Failed to validate database connection");
                 return false;
             }
 
-            // Step 2: Create database if needed
-            if (_settings.DatabaseManagement.AutoCreateDatabase)
+            // Step 2: Create schema if needed
+            if (_settings.DatabaseManagement.AutoCreateSchema)
             {
-                if (!await EnsureDatabaseExistsAsync(cancellationToken))
+                if (!await EnsureSchemaExistsAsync(cancellationToken))
                 {
-                    _logger.LogError("Failed to ensure database exists");
+                    _logger.LogError("Failed to ensure schema exists");
                     return false;
                 }
             }
@@ -61,7 +61,7 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
                 }
             }
 
-            _logger.LogInformation("Database setup completed successfully");
+            _logger.LogInformation("Database setup completed successfully for schema '{SchemaName}'", _settings.DatabaseManagement.SchemaName);
             return true;
         }
         catch (Exception ex)
@@ -72,91 +72,89 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
     }
 
     /// <summary>
-    /// Validate that we can connect with the primary (superuser) connection
+    /// Validate that we can connect to the target database
     /// </summary>
     private async Task<bool> ValidateConnectionAsync(string connectionString, CancellationToken cancellationToken)
     {
         try
         {
-            _logger.LogDebug("Validating superuser connection...");
+            _logger.LogDebug("Validating database connection...");
             
-            // Use postgres database for initial validation to avoid database not found errors
-            var postgresConnectionString = ModifyConnectionStringDatabase(connectionString, "postgres");
-            
-            using var connection = new NpgsqlConnection(postgresConnectionString);
+            using var connection = new NpgsqlConnection(connectionString);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.DatabaseManagement.SetupTimeoutSeconds));
             using var combinedToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
 
             await connection.OpenAsync(combinedToken.Token);
             
-            // Check if user has superuser privileges
-            const string checkSuperUserQuery = "SELECT current_setting('is_superuser') = 'on' AS is_superuser;";
-            using var command = new NpgsqlCommand(checkSuperUserQuery, connection);
-            var isSuperUser = await command.ExecuteScalarAsync(combinedToken.Token) as bool?;
+            // Get database name and check basic connectivity
+            const string checkDbQuery = "SELECT current_database(), current_user, version();";
+            using var command = new NpgsqlCommand(checkDbQuery, connection);
+            using var reader = await command.ExecuteReaderAsync(combinedToken.Token);
             
-            if (isSuperUser != true)
+            if (await reader.ReadAsync(combinedToken.Token))
             {
-                _logger.LogError("Primary connection user does not have superuser privileges");
-                return false;
+                var dbName = reader.GetString(0);
+                var userName = reader.GetString(1);
+                var version = reader.GetString(2);
+                
+                _logger.LogInformation("Connected to database '{Database}' as user '{User}'", dbName, userName);
+                _logger.LogDebug("PostgreSQL version: {Version}", version);
             }
 
-            _logger.LogInformation("Superuser connection validated successfully");
+            _logger.LogInformation("Database connection validated successfully");
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to validate superuser connection");
+            _logger.LogError(ex, "Failed to validate database connection");
             return false;
         }
     }
 
     /// <summary>
-    /// Ensure the target database exists, create it if it doesn't
+    /// Ensure the target schema exists, create it if it doesn't
     /// </summary>
-    private async Task<bool> EnsureDatabaseExistsAsync(CancellationToken cancellationToken)
+    private async Task<bool> EnsureSchemaExistsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            var databaseName = ExtractDatabaseName(_settings.PrimaryConnection.ConnectionString);
-            _logger.LogDebug("Checking if database '{DatabaseName}' exists...", databaseName);
-
-            // Connect to postgres database to check if target database exists
-            var postgresConnectionString = ModifyConnectionStringDatabase(_settings.PrimaryConnection.ConnectionString, "postgres");
+            var schemaName = _settings.DatabaseManagement.SchemaName;
+            _logger.LogDebug("Checking if schema '{SchemaName}' exists...", schemaName);
             
-            using var connection = new NpgsqlConnection(postgresConnectionString);
+            using var connection = new NpgsqlConnection(_settings.PrimaryConnection.ConnectionString);
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(_settings.DatabaseManagement.SetupTimeoutSeconds));
             using var combinedToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
 
             await connection.OpenAsync(combinedToken.Token);
 
-            // Check if database exists
-            const string checkDbQuery = "SELECT 1 FROM pg_database WHERE datname = @dbname;";
-            using var checkCommand = new NpgsqlCommand(checkDbQuery, connection);
-            checkCommand.Parameters.AddWithValue("dbname", databaseName);
+            // Check if schema exists
+            const string checkSchemaQuery = "SELECT 1 FROM information_schema.schemata WHERE schema_name = @schemaname;";
+            using var checkCommand = new NpgsqlCommand(checkSchemaQuery, connection);
+            checkCommand.Parameters.AddWithValue("schemaname", schemaName);
             
             var exists = await checkCommand.ExecuteScalarAsync(combinedToken.Token);
             
             if (exists == null)
             {
-                _logger.LogInformation("Database '{DatabaseName}' does not exist, creating...", databaseName);
+                _logger.LogInformation("Schema '{SchemaName}' does not exist, creating...", schemaName);
                 
-                // Create the database
-                var createDbQuery = $"CREATE DATABASE \"{databaseName}\";";
-                using var createCommand = new NpgsqlCommand(createDbQuery, connection);
+                // Create the schema
+                var createSchemaQuery = $"CREATE SCHEMA \"{schemaName}\";";
+                using var createCommand = new NpgsqlCommand(createSchemaQuery, connection);
                 await createCommand.ExecuteNonQueryAsync(combinedToken.Token);
                 
-                _logger.LogInformation("Database '{DatabaseName}' created successfully", databaseName);
+                _logger.LogInformation("Schema '{SchemaName}' created successfully", schemaName);
             }
             else
             {
-                _logger.LogDebug("Database '{DatabaseName}' already exists", databaseName);
+                _logger.LogDebug("Schema '{SchemaName}' already exists", schemaName);
             }
 
             return true;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to ensure database exists");
+            _logger.LogError(ex, "Failed to ensure schema exists");
             return false;
         }
     }
@@ -170,7 +168,7 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
         {
             var readerUsername = _settings.DatabaseManagement.ReaderUsername;
             var readerPassword = _settings.DatabaseManagement.ReaderPassword;
-            var databaseName = ExtractDatabaseName(_settings.PrimaryConnection.ConnectionString);
+            var schemaName = _settings.DatabaseManagement.SchemaName;
             
             _logger.LogDebug("Ensuring reader user '{ReaderUsername}' exists...", readerUsername);
 
@@ -191,8 +189,8 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
             {
                 _logger.LogInformation("Creating reader user '{ReaderUsername}'...", readerUsername);
                 
-                // Create the role (password must be quoted in SQL)
-                var createRoleQuery = $"CREATE ROLE \"{readerUsername}\" WITH LOGIN PASSWORD '{readerPassword}';";
+                // Create the role with minimal permissions
+                var createRoleQuery = $"CREATE ROLE \"{readerUsername}\" WITH LOGIN PASSWORD '{readerPassword}' NOSUPERUSER NOCREATEDB NOCREATEROLE;";
                 using var createRoleCommand = new NpgsqlCommand(createRoleQuery, connection);
                 await createRoleCommand.ExecuteNonQueryAsync(combinedToken.Token);
                 
@@ -202,7 +200,7 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
             {
                 _logger.LogDebug("Reader user '{ReaderUsername}' already exists", readerUsername);
                 
-                // Update password in case it changed (password must be quoted in SQL)
+                // Update password in case it changed
                 var alterRoleQuery = $"ALTER ROLE \"{readerUsername}\" WITH PASSWORD '{readerPassword}';";
                 using var alterRoleCommand = new NpgsqlCommand(alterRoleQuery, connection);
                 await alterRoleCommand.ExecuteNonQueryAsync(combinedToken.Token);
@@ -210,8 +208,8 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
                 _logger.LogDebug("Reader user password updated");
             }
 
-            // Grant necessary permissions
-            await GrantReaderPermissionsAsync(connection, readerUsername, databaseName, combinedToken.Token);
+            // Grant necessary permissions for the schema
+            await GrantReaderPermissionsAsync(connection, readerUsername, schemaName, combinedToken.Token);
 
             return true;
         }
@@ -223,17 +221,25 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
     }
 
     /// <summary>
-    /// Grant appropriate permissions to the reader user
+    /// Grant appropriate permissions to the reader user for the DatabaseGrinder schema
     /// </summary>
-    private async Task GrantReaderPermissionsAsync(NpgsqlConnection connection, string readerUsername, string databaseName, CancellationToken cancellationToken)
+    private async Task GrantReaderPermissionsAsync(NpgsqlConnection connection, string readerUsername, string schemaName, CancellationToken cancellationToken)
     {
         var permissions = new[]
         {
-            $"GRANT CONNECT ON DATABASE \"{databaseName}\" TO \"{readerUsername}\";",
-            $"GRANT USAGE ON SCHEMA public TO \"{readerUsername}\";",
-            $"GRANT SELECT ON ALL TABLES IN SCHEMA public TO \"{readerUsername}\";",
-            $"GRANT SELECT ON ALL SEQUENCES IN SCHEMA public TO \"{readerUsername}\";",
-            $"ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO \"{readerUsername}\";"
+            // Basic database connection
+            $"GRANT CONNECT ON DATABASE {connection.Database} TO \"{readerUsername}\";",
+            
+            // Schema usage permissions
+            $"GRANT USAGE ON SCHEMA \"{schemaName}\" TO \"{readerUsername}\";",
+            
+            // Current tables and sequences in the schema
+            $"GRANT SELECT ON ALL TABLES IN SCHEMA \"{schemaName}\" TO \"{readerUsername}\";",
+            $"GRANT SELECT ON ALL SEQUENCES IN SCHEMA \"{schemaName}\" TO \"{readerUsername}\";",
+            
+            // Future tables and sequences in the schema
+            $"ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schemaName}\" GRANT SELECT ON TABLES TO \"{readerUsername}\";",
+            $"ALTER DEFAULT PRIVILEGES IN SCHEMA \"{schemaName}\" GRANT SELECT ON SEQUENCES TO \"{readerUsername}\";"
         };
 
         foreach (var permission in permissions)
@@ -247,11 +253,11 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to grant permission: {Permission}", permission);
-                // Continue with other permissions
+                // Continue with other permissions - some may not be needed if objects don't exist yet
             }
         }
 
-        _logger.LogInformation("Reader permissions granted to '{ReaderUsername}'", readerUsername);
+        _logger.LogInformation("Schema permissions granted to '{ReaderUsername}' for schema '{SchemaName}'", readerUsername, schemaName);
     }
 
     /// <summary>
@@ -273,10 +279,21 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
 
                 await connection.OpenAsync(combinedToken.Token);
                 
-                // Test a simple query
+                // Test a simple query and schema access
                 const string testQuery = "SELECT 1;";
                 using var command = new NpgsqlCommand(testQuery, connection);
                 await command.ExecuteScalarAsync(combinedToken.Token);
+                
+                // Test schema access if schema exists
+                var schemaTestQuery = $"SELECT 1 FROM information_schema.schemata WHERE schema_name = @schemaname;";
+                using var schemaCommand = new NpgsqlCommand(schemaTestQuery, connection);
+                schemaCommand.Parameters.AddWithValue("schemaname", _settings.DatabaseManagement.SchemaName);
+                var schemaExists = await schemaCommand.ExecuteScalarAsync(combinedToken.Token);
+                
+                if (schemaExists != null)
+                {
+                    _logger.LogDebug("Reader can access schema '{SchemaName}' on '{ReplicaName}'", _settings.DatabaseManagement.SchemaName, replica.Name);
+                }
                 
                 _logger.LogInformation("Reader connection verified for '{ReplicaName}'", replica.Name);
             }
@@ -291,23 +308,35 @@ public class DatabaseSetupService(ILogger<DatabaseSetupService> logger, IOptions
     }
 
     /// <summary>
+    /// Get information about the schema setup for display purposes
+    /// </summary>
+    /// <returns>Schema information tuple</returns>
+    public (string SchemaName, string ReaderUsername, string DatabaseName) GetSchemaInfo()
+    {
+        try
+        {
+            var databaseName = ExtractDatabaseName(_settings.PrimaryConnection.ConnectionString);
+            return (_settings.DatabaseManagement.SchemaName, _settings.DatabaseManagement.ReaderUsername, databaseName);
+        }
+        catch
+        {
+            return (_settings.DatabaseManagement.SchemaName, _settings.DatabaseManagement.ReaderUsername, "unknown");
+        }
+    }
+
+    /// <summary>
     /// Extract database name from connection string
     /// </summary>
     private static string ExtractDatabaseName(string connectionString)
     {
-        var builder = new NpgsqlConnectionStringBuilder(connectionString);
-        return builder.Database ?? "grinder_primary";
-    }
-
-    /// <summary>
-    /// Modify connection string to use a different database
-    /// </summary>
-    private static string ModifyConnectionStringDatabase(string connectionString, string newDatabase)
-    {
-        var builder = new NpgsqlConnectionStringBuilder(connectionString)
+        try
         {
-            Database = newDatabase
-        };
-        return builder.ToString();
+            var builder = new NpgsqlConnectionStringBuilder(connectionString);
+            return builder.Database ?? "unknown";
+        }
+        catch
+        {
+            return "unknown";
+        }
     }
 }

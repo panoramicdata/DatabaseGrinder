@@ -122,19 +122,29 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	public static int BrandingHeight => 1;
 
 	/// <summary>
+	/// Height of the PostgreSQL replication stats pane (2 rows: stats + separator)
+	/// </summary>
+	public static int ReplicationStatsHeight => 2;
+
+	/// <summary>
 	/// Height of the footer area at the bottom (1 row for shortcuts)
 	/// </summary>
 	public static int FooterHeight => 1;
 
 	/// <summary>
-	/// Available height for content (excluding branding and footer areas)
+	/// Available height for content (excluding branding, replication stats, and footer areas)
 	/// </summary>
-	public int ContentHeight => Math.Max(0, Height - BrandingHeight - FooterHeight);
+	public int ContentHeight => Math.Max(0, Height - BrandingHeight - ReplicationStatsHeight - FooterHeight);
 
 	/// <summary>
-	/// Y position where content starts (after branding area)
+	/// Y position where replication stats start (after branding area)
 	/// </summary>
-	public int ContentStartY => BrandingHeight;
+	public int ReplicationStatsStartY => BrandingHeight;
+
+	/// <summary>
+	/// Y position where content starts (after branding and replication stats areas)
+	/// </summary>
+	public int ContentStartY => BrandingHeight + ReplicationStatsHeight;
 
 	/// <summary>
 	/// Y position where footer starts

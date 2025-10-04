@@ -2,6 +2,8 @@
 
 A high-performance PostgreSQL replication monitoring and database stress testing tool built with .NET 10.0. DatabaseGrinder provides real-time monitoring of database write operations and PostgreSQL replication lag across multiple replica nodes with advanced sequence tracking for missing row detection.
 
+**NEW in v1.4.0:** Schema-based isolation allows safe usage on existing production databases without risk.
+
 [![DatabaseGrinder Screenshot](Documentation/Screenshot.png)](Documentation/Screenshot.png)
 
 ## 🚀 Features
@@ -11,7 +13,8 @@ A high-performance PostgreSQL replication monitoring and database stress testing
 - **Dual-Pane Console UI**: Split-screen interface showing writer status and replication monitoring with SSH optimization
 - **PostgreSQL Replication Monitoring**: Track replication lag and missing records across multiple replica connections
 - **Missing Row Detection**: Advanced sequence number tracking to identify gaps in replication beyond just lag
-- **Automatic Database Setup**: Creates databases, users, and permissions automatically with proper security
+- **🆕 Schema-based Isolation**: Uses dedicated `databasegrinder` schema for complete safety on production databases
+- **🆕 Production Database Safe**: No longer creates separate databases - works safely within existing databases
 - **Data Retention Management**: Automatic cleanup of records older than 5 minutes with table truncation on startup
 - **Robust Error Handling**: Comprehensive error recovery and connection resilience with progressive backoff
 - **Background Services**: Non-blocking operations with graceful shutdown and cleanup capabilities
@@ -23,11 +26,12 @@ A high-performance PostgreSQL replication monitoring and database stress testing
 DatabaseGrinder/
 ├── DatabaseGrinder/
 │   ├── Data/
-│   │   ├── DatabaseContext.cs           # Entity Framework Core context with PostgreSQL support
-│   │   └── Migrations/                  # EF Core migrations including sequence number support
+│   │   ├── DatabaseContext.cs           # Entity Framework Core context with schema support
+│   │   ├── DatabaseContextFactory.cs    # Design-time factory for EF Core migrations
+│   │   └── Migrations/                  # EF Core migrations with schema isolation
 │   ├── Services/
-│   │   ├── DatabaseSetupService.cs      # Automatic DB/user provisioning with superuser management
-│   │   ├── DatabaseCleanupService.cs    # Database cleanup and resource management
+│   │   ├── DatabaseSetupService.cs      # Schema and user provisioning with production safety
+│   │   ├── DatabaseCleanupService.cs    # Schema cleanup and resource management
 │   │   ├── DatabaseWriter.cs            # Continuous write operations with sequence tracking
 │   │   ├── ReplicationMonitor.cs        # Multi-threaded replication lag monitoring
 │   │   └── UIManager.cs                 # Console UI coordination and lifecycle management
@@ -38,7 +42,7 @@ DatabaseGrinder/
 │   ├── Models/
 │   │   └── TestRecord.cs                # Database model with ID, SequenceNumber, and Timestamp
 │   ├── Configuration/
-│   │   └── DatabaseGrinderSettings.cs   # Strongly-typed configuration with validation
+│   │   └── DatabaseGrinderSettings.cs   # Strongly-typed configuration with schema validation
 │   └── Program.cs                       # Application entry point with DI and lifecycle management
 └── Documentation/
     └── Documentation.md                 # Comprehensive technical documentation
@@ -47,9 +51,10 @@ DatabaseGrinder/
 ## 📋 Requirements
 
 - **.NET 10.0 SDK** or later
-- **PostgreSQL 17+** server with superuser access for setup
+- **PostgreSQL 17+** server with connection access
 - **Windows/Linux/macOS** (cross-platform compatible)
-- **Console window** minimum 80x25 characters for optimal UI display (supports 20x20 minimum)
+- **Console window** minimum 80x25 characters for optimal UI display (supports 20x10 minimum)
+- **🆕 Production Ready**: No longer requires superuser access - works with existing databases
 
 ## ⚙️ Configuration
 
@@ -59,24 +64,25 @@ Configure the application via `appsettings.json`:
 {
   "DatabaseGrinder": {
     "PrimaryConnection": {
-      "ConnectionString": "Host=localhost;Database=grinder_primary;Username=DatabaseGrinder;Password=DatabaseGrinder;Include Error Detail=true"
+      "ConnectionString": "Host=localhost;Database=your_existing_database;Username=your_user;Password=your_password;Include Error Detail=true"
     },
     "ReplicaConnections": [
       {
         "Name": "Replica 1",
-        "ConnectionString": "Host=replica1.example.com;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
+        "ConnectionString": "Host=replica1.example.com;Database=your_existing_database;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       },
       {
         "Name": "Replica 2", 
-        "ConnectionString": "Host=replica2.example.com;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
+        "ConnectionString": "Host=replica2.example.com;Database=your_existing_database;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       },
       {
         "Name": "Replica 3",
-        "ConnectionString": "Host=replica3.example.com;Database=grinder_primary;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
+        "ConnectionString": "Host=replica3.example.com;Database=your_existing_database;Username=DatabaseGrinderReader;Password=readpass;Include Error Detail=true"
       }
     ],
     "DatabaseManagement": {
-      "AutoCreateDatabase": true,
+      "SchemaName": "databasegrinder",
+      "AutoCreateSchema": true,
       "AutoCreateUsers": true,
       "ReaderUsername": "DatabaseGrinderReader",
       "ReaderPassword": "readpass",
@@ -100,10 +106,11 @@ Configure the application via `appsettings.json`:
 
 | Property | Description | Default |
 |----------|-------------|---------|
-| `PrimaryConnection.ConnectionString` | Primary database connection for writes (requires superuser privileges) | Required |
+| `PrimaryConnection.ConnectionString` | Primary database connection for writes | Required |
 | `ReplicaConnections[].Name` | Display name for each replica connection | Required |
 | `ReplicaConnections[].ConnectionString` | Replica database connections to monitor (read-only) | Required |
-| `DatabaseManagement.AutoCreateDatabase` | Automatically create database if missing | `true` |
+| `DatabaseManagement.SchemaName` | **🆕** Schema name for DatabaseGrinder objects | `databasegrinder` |
+| `DatabaseManagement.AutoCreateSchema` | **🆕** Automatically create schema if missing | `true` |
 | `DatabaseManagement.AutoCreateUsers` | Automatically create reader user if missing | `true` |
 | `DatabaseManagement.ReaderUsername` | Username for read-only replica connections | `DatabaseGrinderReader` |
 | `DatabaseManagement.ReaderPassword` | Password for read-only replica connections | `readpass` |
@@ -124,7 +131,7 @@ Configure the application via `appsettings.json`:
 
    ```bash
    cp DatabaseGrinder/appsettings.example.json DatabaseGrinder/appsettings.json
-   # Edit appsettings.json with your PostgreSQL connection details
+   # Edit appsettings.json with your existing PostgreSQL database details
    ```
 
 3. **Build and run**:
@@ -139,7 +146,31 @@ Configure the application via `appsettings.json`:
    - **Left Pane**: Shows continuous database write operations with sequence numbers and statistics
    - **Right Pane**: Displays replication lag, missing sequences, and connection status for configured replicas
    - Press **Ctrl+C** to quit gracefully
-   - Press **Ctrl+Q** for database cleanup and quit (removes database and read-only user)
+   - **🆕** Press **Ctrl+Q** for schema cleanup and quit (removes only DatabaseGrinder schema and read-only user)
+
+## 🔐 Production Database Safety
+
+### **🆕 Schema-Based Isolation**
+
+DatabaseGrinder now uses a dedicated schema (`databasegrinder` by default) instead of creating separate databases:
+
+- **✅ Safe for Production**: All DatabaseGrinder objects are isolated in their own schema
+- **✅ No Database Creation**: Uses your existing databases without modification
+- **✅ Minimal Permissions**: No longer requires superuser access
+- **✅ Easy Cleanup**: `Ctrl+Q` removes only the DatabaseGrinder schema and objects
+- **✅ Zero Impact**: Your existing tables, users, and data remain completely untouched
+
+### **Database Object Structure**
+```sql
+-- DatabaseGrinder creates:
+CREATE SCHEMA databasegrinder;
+CREATE TABLE databasegrinder.test_records (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    sequence_number bigint NOT NULL,
+    timestamp timestamp with time zone NOT NULL
+);
+-- Plus indexes and read-only user permissions
+```
 
 ## 📊 Console Interface
 
@@ -151,7 +182,7 @@ Configure the application via `appsettings.json`:
 [13:35:42.454] Record #304 (seq:304) inserted successfully   | │   2 of 3 online - 3 missing │
 [13:35:42.561] Record #305 (seq:305) inserted successfully   | ├─────────────────────────────┤
 Stats: 10/sec | Total: 305 | Seq: 305 | Errors: 0            | │ 🟢 Replica 1: ONLINE       │
-Up: 00:00:33                                                 | │ ⚡ 150ms                     │
+Schema: databasegrinder | Up: 00:00:33                       | │ ⚡ 150ms                     │
                                                              | │ LAG [███████·····] OK       │
 Status: Database Writer Active                               | │ Behind: 2 records, 0 seq    │
 Press Ctrl+C to quit | Ctrl+Q to cleanup and quit            | │ 🔢 No missing sequences     │
@@ -191,10 +222,10 @@ dotnet publish --configuration Release --output ./publish
 
 ### Project Structure
 
-- **Entity Framework Core**: Database operations with PostgreSQL provider and automated migrations
+- **Entity Framework Core**: Database operations with PostgreSQL provider and schema-aware migrations
 - **Background Services**: `IHostedService` implementations for continuous operations with graceful shutdown
 - **Console UI Framework**: Custom dual-pane layout with differential rendering for SSH optimization
-- **Configuration System**: Strongly-typed settings with comprehensive validation
+- **Configuration System**: Strongly-typed settings with schema name validation
 - **Dependency Injection**: Full DI container setup with scoped service lifetime management
 - **Sequence Tracking**: Application-level sequence numbers for missing row detection in replication
 
@@ -210,12 +241,12 @@ dotnet publish --configuration Release --output ./publish
 
 ## 🔐 Security Features
 
+- **Schema-based Isolation**: Complete separation from your production data using dedicated schema
 - **Separate Database Users**: Distinct read/write users with minimal required permissions
 - **Automatic User Provisioning**: Secure password policies with configurable credentials
 - **Connection String Validation**: Input sanitization and connection parameter verification
-- **Database Isolation**: Dedicated database with controlled access and automatic cleanup
 - **No Sensitive Data**: Test records contain only timestamps and sequence numbers
-- **Superuser Safety**: Main database user preserved during cleanup operations
+- **Production Safety**: Main database and existing objects preserved during cleanup operations
 
 ## 🚨 Advanced Monitoring Features
 
@@ -244,31 +275,31 @@ dotnet publish --configuration Release --output ./publish
 1. **Database Connection Failed**:
    - Verify PostgreSQL server is running and accessible
    - Check connection strings in `appsettings.json`
-   - Ensure primary user has superuser privileges for database/user creation
+   - Ensure user has schema creation permissions (or set `AutoCreateSchema: false`)
    - Verify firewall and network connectivity
 
 2. **Permission Denied**:
-   - Verify primary connection user has `SUPERUSER` privileges
+   - Verify primary connection user has schema creation privileges
    - Check PostgreSQL `pg_hba.conf` authentication settings
-   - Ensure database creation permissions are available
+   - Ensure database connection permissions are available
 
 3. **UI Display Issues**:
    - Ensure console window supports UTF-8 encoding
-   - Minimum console size is 20x20 characters (80x25 recommended)
+   - Minimum console size is 20x10 characters (80x25 recommended)
    - For SSH connections, verify terminal supports ANSI color codes
 
 4. **Replication Monitoring Issues**:
-   - Verify replica connections have read access to the target database
+   - Verify replica connections have read access to the target database and schema
    - Check that external replication system is functioning
-   - Ensure reader user exists and has SELECT permissions
+   - Ensure reader user exists and has SELECT permissions on the schema
 
-### Database Cleanup
+### **🆕 Schema Cleanup**
 
 Use **Ctrl+Q** to perform complete cleanup:
 - Stops all background services gracefully
 - Removes the read-only user (`DatabaseGrinderReader`)
-- Drops the test database (`grinder_primary`)
-- Preserves the main database user for safety
+- **🆕** Drops the DatabaseGrinder schema (with all objects)
+- **✅** Preserves your main database and all existing data (SAFE)
 
 ### Logging and Diagnostics
 
@@ -311,6 +342,7 @@ For support and questions:
 - **v1.1.0** - Added enhanced visual indicators and missing row detection with sequence tracking
 - **v1.2.0** - SSH optimization, differential rendering, and database cleanup functionality
 - **v1.3.0** - .NET 10.0 upgrade, improved error handling, and production-ready features
+- **🆕 v1.4.0** - **Schema-based isolation for production database safety**
 
 ---
 

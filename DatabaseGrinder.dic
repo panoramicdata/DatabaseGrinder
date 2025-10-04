@@ -1,0 +1,11 @@
+validator
+PostgreSQL
+replication
+lsn
+wal
+xmin
+datname
+microseconds
+conninfo
+tli
+backend

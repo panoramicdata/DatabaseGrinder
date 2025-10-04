@@ -216,6 +216,9 @@ public class ReplicationMonitor(
 	{
 		using var scope = _serviceProvider.CreateScope();
 		var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+		
+		// Set the schema name in the context
+		context.SetSchemaName(_settings.DatabaseManagement.SchemaName);
 
 		var latestRecord = await context.TestRecords
 			.OrderByDescending(r => r.Id)
@@ -241,6 +244,9 @@ public class ReplicationMonitor(
 			.Options;
 
 		using var replicaContext = new DatabaseContext(options);
+		
+		// Set the schema name in the replica context
+		replicaContext.SetSchemaName(_settings.DatabaseManagement.SchemaName);
 
 		// Test connection first
 		await replicaContext.Database.OpenConnectionAsync(cancellationToken);

@@ -59,9 +59,15 @@ public class ReplicaConnectionSettings
 public class DatabaseManagementSettings
 {
 	/// <summary>
-	/// Whether to automatically create the database if it doesn't exist (default: true)
+	/// Schema name to use for DatabaseGrinder objects (default: databasegrinder)
+	/// Using a dedicated schema allows safe usage on existing production databases
 	/// </summary>
-	public bool AutoCreateDatabase { get; set; } = true;
+	public string SchemaName { get; set; } = "databasegrinder";
+
+	/// <summary>
+	/// Whether to automatically create the schema if it doesn't exist (default: true)
+	/// </summary>
+	public bool AutoCreateSchema { get; set; } = true;
 
 	/// <summary>
 	/// Whether to automatically create database users if they don't exist (default: true)
@@ -219,6 +225,15 @@ public static class ConfigurationValidator
 		}
 
 		// Validate database management settings
+		if (string.IsNullOrWhiteSpace(settings.DatabaseManagement.SchemaName))
+		{
+			errors.Add("SchemaName is required");
+		}
+		else if (!IsValidSchemaName(settings.DatabaseManagement.SchemaName))
+		{
+			errors.Add("SchemaName must be a valid PostgreSQL identifier");
+		}
+
 		if (settings.DatabaseManagement.AutoCreateUsers)
 		{
 			if (string.IsNullOrWhiteSpace(settings.DatabaseManagement.ReaderUsername))
@@ -238,5 +253,27 @@ public static class ConfigurationValidator
 		}
 
 		return errors;
+	}
+
+	/// <summary>
+	/// Validate PostgreSQL schema name
+	/// </summary>
+	/// <param name="schemaName">Schema name to validate</param>
+	/// <returns>True if valid</returns>
+	private static bool IsValidSchemaName(string schemaName)
+	{
+		// PostgreSQL identifier rules: start with letter or underscore, followed by letters, digits, underscores, or dollar signs
+		// Length limit of 63 bytes (we'll be conservative and use characters)
+		if (string.IsNullOrWhiteSpace(schemaName) || schemaName.Length > 63)
+		{
+			return false;
+		}
+
+		if (!char.IsLetter(schemaName[0]) && schemaName[0] != '_')
+		{
+			return false;
+		}
+
+		return schemaName.All(c => char.IsLetterOrDigit(c) || c == '_' || c == '$');
 	}
 }

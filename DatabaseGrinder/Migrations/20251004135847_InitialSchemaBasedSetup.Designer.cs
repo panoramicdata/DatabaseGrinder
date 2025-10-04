@@ -12,14 +12,15 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace DatabaseGrinder.Migrations
 {
     [DbContext(typeof(DatabaseContext))]
-    [Migration("20251003121740_InitialCreate")]
-    partial class InitialCreate
+    [Migration("20251004135847_InitialSchemaBasedSetup")]
+    partial class InitialSchemaBasedSetup
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
+                .HasDefaultSchema("databasegrinder")
                 .HasAnnotation("ProductVersion", "9.0.9")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -34,16 +35,23 @@ namespace DatabaseGrinder.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<long>("SequenceNumber")
+                        .HasColumnType("bigint")
+                        .HasColumnName("sequence_number");
+
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("timestamp");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SequenceNumber")
+                        .HasDatabaseName("ix_test_records_sequence_number");
+
                     b.HasIndex("Timestamp")
                         .HasDatabaseName("ix_test_records_timestamp");
 
-                    b.ToTable("test_records", (string)null);
+                    b.ToTable("test_records", "databasegrinder");
                 });
 #pragma warning restore 612, 618
         }

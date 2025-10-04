@@ -15,6 +15,7 @@ public class UIManager(
 	ConsoleManager consoleManager,
 	LeftPane leftPane,
 	RightPane rightPane,
+	ReplicationStatsPane replicationStatsPane,
 	IHostApplicationLifetime hostLifetime) : BackgroundService
 {
 	private readonly DatabaseGrinderSettings _settings = settings.Value;
@@ -339,6 +340,9 @@ public class UIManager(
 
 			// Draw vertical separator (ConsoleManager will handle branding area automatically)
 			consoleManager.DrawVerticalSeparator();
+
+			// Render PostgreSQL replication stats pane to buffer
+			replicationStatsPane.Render();
 
 			// Render left pane to buffer
 			leftPane.Render();

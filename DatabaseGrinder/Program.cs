@@ -156,7 +156,7 @@ internal partial class Program
 			var hostLifetime = scope.ServiceProvider.GetRequiredService<IHostApplicationLifetime>();
 
 			// Log shutdown initiation
-			logger.LogWarning("Ctrl+Q pressed - Initiating shutdown with database cleanup");
+			logger.LogWarning("Ctrl+Q pressed - Initiating shutdown with DatabaseGrinder cleanup");
 
 			// Clean up console first
 			CleanupConsole();
@@ -168,7 +168,7 @@ internal partial class Program
 			Console.WriteLine("=====================================");
 			Console.ResetColor();
 
-			var (DatabaseName, ReaderUsername, MainUsername) = cleanupService.GetCleanupInfo();
+			var (SchemaName, ReaderUsername, DatabaseName) = cleanupService.GetCleanupInfo();
 
 			Console.WriteLine("Stopping background services...");
 			Console.ForegroundColor = ConsoleColor.Cyan;
@@ -177,20 +177,20 @@ internal partial class Program
 			Console.ResetColor();
 
 			// Stop background services first to prevent connection errors
-			logger.LogWarning("Stopping background services before database cleanup");
+			logger.LogWarning("Stopping background services before DatabaseGrinder cleanup");
 			hostLifetime.StopApplication();
 
 			// Give services time to shut down gracefully
 			Console.WriteLine("Waiting for services to shut down...");
 			await Task.Delay(2000);
 
-			Console.WriteLine("Cleaning up database resources:");
+			Console.WriteLine("Cleaning up DatabaseGrinder resources:");
 			Console.ForegroundColor = ConsoleColor.Red;
+			Console.WriteLine($"  • Dropping schema: {SchemaName} (with all objects)");
 			Console.WriteLine($"  • Dropping read-only user: {ReaderUsername}");
-			Console.WriteLine($"  • Dropping database: {DatabaseName}");
 			Console.ResetColor();
 			Console.ForegroundColor = ConsoleColor.Green;
-			Console.WriteLine($"  • Preserving main user: {MainUsername} (SAFE)");
+			Console.WriteLine($"  • Preserving database: {DatabaseName} (SAFE)");
 			Console.ResetColor();
 			Console.WriteLine();
 
@@ -198,7 +198,7 @@ internal partial class Program
 			Console.WriteLine("Performing cleanup...");
 			Console.ResetColor();
 
-			logger.LogWarning("Performing database cleanup via Ctrl+Q");
+			logger.LogWarning("Performing DatabaseGrinder schema cleanup via Ctrl+Q");
 
 			await cleanupService.CleanupDatabaseResourcesAsync();
 
@@ -207,7 +207,7 @@ internal partial class Program
 			Console.ResetColor();
 			Console.WriteLine();
 
-			logger.LogInformation("Database cleanup completed successfully");
+			logger.LogInformation("DatabaseGrinder cleanup completed successfully");
 
 			Console.WriteLine("DatabaseGrinder shutdown complete.");
 			Console.WriteLine("Exiting in 2 seconds...");
@@ -292,12 +292,15 @@ internal partial class Program
 		services.AddSingleton<ConsoleManager>(provider => new ConsoleManager(minWidth, minHeight));
 		services.AddSingleton<LeftPane>();
 		services.AddSingleton<RightPane>();
+		services.AddSingleton<ReplicationStatsPane>(); // Add PostgreSQL replication stats pane
 		services.AddScoped<DatabaseSetupService>();
-		services.AddScoped<DatabaseCleanupService>(); // Add cleanup service
+		services.AddScoped<DatabaseCleanupService>();
+		services.AddScoped<PostgreSQLReplicationStatsService>(); // Add PostgreSQL replication stats service
 
 		// Add background services (order matters for dependencies)
 		services.AddHostedService<DatabaseWriter>();
 		services.AddHostedService<ReplicationMonitor>();
+		services.AddHostedService<PostgreSQLReplicationMonitor>(); // Add PostgreSQL native replication monitoring
 		services.AddHostedService<UIManager>();
 	}
 
@@ -373,17 +376,22 @@ internal partial class Program
 	{
 		using var scope = services.CreateScope();
 		var context = scope.ServiceProvider.GetRequiredService<DatabaseContext>();
+		var configuration = scope.ServiceProvider.GetRequiredService<IConfiguration>();
 		var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
 
 		try
 		{
-			logger.LogInformation("Ensuring database exists and is up to date...");
+			// Configure schema name in the context
+			var schemaName = configuration.GetValue<string>("DatabaseGrinder:DatabaseManagement:SchemaName", "databasegrinder");
+			context.SetSchemaName(schemaName);
+
+			logger.LogInformation("Ensuring database schema '{SchemaName}' is up to date...", schemaName);
 			await context.Database.MigrateAsync();
-			logger.LogInformation("Database migrations applied successfully");
+			logger.LogInformation("Database migrations applied successfully for schema '{SchemaName}'", schemaName);
 		}
 		catch (Exception ex)
 		{
-			logger.LogError(ex, "Failed to ensure database is ready");
+			logger.LogError(ex, "Failed to ensure database schema is ready");
 			throw;
 		}
 	}
@@ -422,6 +430,7 @@ internal partial class Program
 		var leftPane = scope.ServiceProvider.GetRequiredService<LeftPane>();
 		var rightPane = scope.ServiceProvider.GetRequiredService<RightPane>();
 		var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+		var setupService = scope.ServiceProvider.GetRequiredService<DatabaseSetupService>();
 
 		try
 		{
@@ -431,20 +440,26 @@ internal partial class Program
 			// Initialize console immediately - no delay
 			consoleManager.Initialize();
 
+			// Get schema information for display
+			var (schemaName, readerUsername, databaseName) = setupService.GetSchemaInfo();
+
 			// Log detailed layout information
 			logger.LogInformation("Console initialized. Size: {Width}x{Height}", consoleManager.Width, consoleManager.Height);
 			logger.LogInformation("Layout: Left pane width: {LeftWidth}, Separator at X: {SepX}, Right pane start: {RightStart}, Right pane width: {RightWidth}",
 				consoleManager.LeftPaneWidth, consoleManager.SeparatorX, consoleManager.RightPaneStartX, consoleManager.RightPaneWidth);
 			logger.LogInformation("Platform: {Platform}", consoleManager.GetPlatformInfo());
+			logger.LogInformation("Using schema '{SchemaName}' in database '{DatabaseName}'", schemaName, databaseName);
 
-			// Initialize UI with startup messages
-			leftPane.AddLogEntry("DatabaseGrinder v1.1.0 started");
+			// Initialize UI with startup messages including schema information
+			leftPane.AddLogEntry("DatabaseGrinder v1.3.0 started");
+			leftPane.AddLogEntry("Schema-based isolation for production database safety");
 			leftPane.AddLogEntry("Enhanced with sequence tracking and missing row detection");
+			leftPane.AddLogEntry($"Using schema: {schemaName} in database: {databaseName}");
 			leftPane.AddLogEntry("Press Ctrl+C to exit gracefully");
-			leftPane.AddLogEntry("Press Ctrl+Q for database cleanup and quit");
+			leftPane.AddLogEntry("Press Ctrl+Q for schema cleanup and quit");
 			leftPane.AddLogEntry($"Console layout: {consoleManager.LeftPaneWidth} | {consoleManager.RightPaneWidth} chars");
 			leftPane.AddLogEntry("Console UI initialized");
-			leftPane.AddLogEntry("Database setup completed");
+			leftPane.AddLogEntry("Schema setup completed");
 			leftPane.AddLogEntry("Table truncated and sequence reset");
 			leftPane.UpdateConnectionStatus("Ready - Starting services...", true);
 

@@ -17,6 +17,7 @@ namespace DatabaseGrinder.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
+                .HasDefaultSchema("databasegrinder")
                 .HasAnnotation("ProductVersion", "9.0.9")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
@@ -32,7 +33,8 @@ namespace DatabaseGrinder.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
                     b.Property<long>("SequenceNumber")
-                        .HasColumnType("bigint");
+                        .HasColumnType("bigint")
+                        .HasColumnName("sequence_number");
 
                     b.Property<DateTime>("Timestamp")
                         .HasColumnType("timestamp with time zone")
@@ -40,10 +42,13 @@ namespace DatabaseGrinder.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("SequenceNumber")
+                        .HasDatabaseName("ix_test_records_sequence_number");
+
                     b.HasIndex("Timestamp")
                         .HasDatabaseName("ix_test_records_timestamp");
 
-                    b.ToTable("test_records", (string)null);
+                    b.ToTable("test_records", "databasegrinder");
                 });
 #pragma warning restore 612, 618
         }
