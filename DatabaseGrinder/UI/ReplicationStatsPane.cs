@@ -1,5 +1,4 @@
 using DatabaseGrinder.Services;
-using Microsoft.Extensions.Logging;
 
 namespace DatabaseGrinder.UI;
 
@@ -10,12 +9,11 @@ namespace DatabaseGrinder.UI;
 /// Initializes a new instance of ReplicationStatsPane
 /// </remarks>
 /// <param name="consoleManager">Console manager for display operations</param>
-/// <param name="logger">Logger instance</param>
-public class ReplicationStatsPane(ConsoleManager consoleManager, ILogger<ReplicationStatsPane> logger)
+public class ReplicationStatsPane(ConsoleManager consoleManager)
 {
 	private readonly Lock _lockObject = new();
 	private PostgreSQLReplicationSummary? _primaryStats;
-	private readonly Dictionary<string, PostgreSQLReplicationSummary> _replicaStats = new();
+	private readonly Dictionary<string, PostgreSQLReplicationSummary> _replicaStats = [];
 
 	/// <summary>
 	/// Update PostgreSQL replication statistics for primary server
