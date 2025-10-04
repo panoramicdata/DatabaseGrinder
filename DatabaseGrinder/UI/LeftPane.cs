@@ -78,7 +78,7 @@ public class LeftPane
 		{
 			var paneWidth = _consoleManager.LeftPaneWidth;
 			var contentHeight = _consoleManager.ContentHeight;
-			var startY = _consoleManager.ContentStartY + 1; // +1 to skip separator line
+			var startY = ConsoleManager.ContentStartY + 1; // +1 to skip separator line
 
 			// Ensure we have valid dimensions
 			if (paneWidth <= 0 || contentHeight <= 0)

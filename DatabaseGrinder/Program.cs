@@ -60,7 +60,46 @@ internal partial class Program
 
 			// Get logger for startup messages
 			var logger = host.Services.GetRequiredService<ILogger<Program>>();
-			logger.LogInformation("DatabaseGrinder v1.1.0 - Database Replication Monitor by Panoramic Data Limited");
+			
+			// Get version using Nerdbank GitVersioning format with git height
+			string versionString;
+			
+			try
+			{
+				var assembly = System.Reflection.Assembly.GetEntryAssembly();
+				
+				// For Nerdbank GitVersioning, we want Major.Minor.GitHeight format
+				// The FileVersion typically contains: Major.Minor.Build.Revision where Revision is git height
+				var version = assembly?.GetName().Version;
+				if (version != null)
+				{
+					// Nerdbank GitVersioning puts git height in the Revision field (4th component)
+					// Format as v1.4.12345 where 12345 is the git height
+					if (version.Revision > 0)
+					{
+						versionString = $"v{version.Major}.{version.Minor}.{version.Revision}";
+					}
+					else if (version.Build > 0)
+					{
+						// Sometimes git height is in Build field
+						versionString = $"v{version.Major}.{version.Minor}.{version.Build}";
+					}
+					else
+					{
+						versionString = $"v{version.Major}.{version.Minor}.0";
+					}
+				}
+				else
+				{
+					versionString = "v1.4.0";
+				}
+			}
+			catch
+			{
+				versionString = "v1.4.0";
+			}
+			
+			logger.LogInformation("DatabaseGrinder v{Version} - Database Replication Monitor by Panoramic Data Limited", versionString);
 			logger.LogInformation("Initializing application...");
 
 			// Log console dimensions for debugging
@@ -450,8 +489,46 @@ internal partial class Program
 			logger.LogInformation("Platform: {Platform}", consoleManager.GetPlatformInfo());
 			logger.LogInformation("Using schema '{SchemaName}' in database '{DatabaseName}'", schemaName, databaseName);
 
+			// Get version using Nerdbank GitVersioning format with git height
+			string versionString;
+			
+			try
+			{
+				var assembly = System.Reflection.Assembly.GetEntryAssembly();
+				
+				// For Nerdbank GitVersioning, we want Major.Minor.GitHeight format
+				// The FileVersion typically contains: Major.Minor.Build.Revision where Revision is git height
+				var version = assembly?.GetName().Version;
+				if (version != null)
+				{
+					// Nerdbank GitVersioning puts git height in the Revision field (4th component)
+					// Format as v1.4.12345 where 12345 is the git height
+					if (version.Revision > 0)
+					{
+						versionString = $"v{version.Major}.{version.Minor}.{version.Revision}";
+					}
+					else if (version.Build > 0)
+					{
+						// Sometimes git height is in Build field
+						versionString = $"v{version.Major}.{version.Minor}.{version.Build}";
+					}
+					else
+					{
+						versionString = $"v{version.Major}.{version.Minor}.0";
+					}
+				}
+				else
+				{
+					versionString = "v1.4.0";
+				}
+			}
+			catch
+			{
+				versionString = "v1.4.0";
+			}
+
 			// Initialize UI with startup messages including schema information
-			leftPane.AddLogEntry("DatabaseGrinder v1.3.0 started");
+			leftPane.AddLogEntry($"DatabaseGrinder {versionString} started");
 			leftPane.AddLogEntry("Schema-based isolation for production database safety");
 			leftPane.AddLogEntry("Enhanced with sequence tracking and missing row detection");
 			leftPane.AddLogEntry($"Using schema: {schemaName} in database: {databaseName}");

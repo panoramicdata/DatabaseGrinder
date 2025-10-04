@@ -144,7 +144,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// <summary>
 	/// Y position where content starts (after branding and replication stats areas)
 	/// </summary>
-	public int ContentStartY => BrandingHeight + ReplicationStatsHeight;
+	public static int ContentStartY => BrandingHeight + ReplicationStatsHeight;
 
 	/// <summary>
 	/// Y position where footer starts
@@ -523,12 +523,50 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	{
 		const string nkoChar = "ߝ"; // Unicode Nko letter FA
 
+		// Get version using Nerdbank GitVersioning format with git height
+		string versionString;
+		
+		try
+		{
+			var assembly = System.Reflection.Assembly.GetEntryAssembly();
+			
+			// For Nerdbank GitVersioning, we want Major.Minor.GitHeight format
+			// The FileVersion typically contains: Major.Minor.Build.Revision where Revision is git height
+			var version = assembly?.GetName().Version;
+			if (version != null)
+			{
+				// Nerdbank GitVersioning puts git height in the Revision field (4th component)
+				// Format as v1.4.12345 where 12345 is the git height
+				if (version.Revision > 0)
+				{
+					versionString = $"v{version.Major}.{version.Minor}.{version.Revision}";
+				}
+				else if (version.Build > 0)
+				{
+					// Sometimes git height is in Build field
+					versionString = $"v{version.Major}.{version.Minor}.{version.Build}";
+				}
+				else
+				{
+					versionString = $"v{version.Major}.{version.Minor}.0";
+				}
+			}
+			else
+			{
+				versionString = "v1.4.0";
+			}
+		}
+		catch
+		{
+			versionString = "v1.4.0";
+		}
+
 		if (_supportsUnicode)
 		{
 			// Try Unicode logo first - with proper spacing: [logo] [space] [panoramic data] [DatabaseGrinder] [version] [URL]
 			try
 			{
-				return $"{nkoChar} panoramic data  DatabaseGrinder v1.1.0  https://panoramicdata.com/";
+				return $"{nkoChar} panoramic data  DatabaseGrinder {versionString}  https://panoramicdata.com/";
 			}
 			catch
 			{
@@ -537,7 +575,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 		}
 
 		// Fallback without logo character
-		return "panoramic data  DatabaseGrinder v1.1.0  https://panoramicdata.com/";
+		return $"panoramic data  DatabaseGrinder {versionString}  https://panoramicdata.com/";
 	}
 
 	/// <summary>

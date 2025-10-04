@@ -51,7 +51,7 @@ public class RightPane(ConsoleManager consoleManager)
 		{
 			var paneWidth = consoleManager.RightPaneWidth;
 			var paneStartX = consoleManager.RightPaneStartX;
-			var startY = consoleManager.ContentStartY + 1; // +1 to skip separator line
+			var startY = ConsoleManager.ContentStartY + 1; // +1 to skip separator line
 
 			// Clear right pane content area only (content area between global header and footer)
 			for (int y = startY; y < consoleManager.FooterStartY; y++)
