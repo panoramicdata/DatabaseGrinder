@@ -1,3 +1,5 @@
+File: DatabaseGrinder.dic
+````````
 validator
 PostgreSQL
 replication
@@ -9,3 +11,4 @@ microseconds
 conninfo
 tli
 backend
+Postgre

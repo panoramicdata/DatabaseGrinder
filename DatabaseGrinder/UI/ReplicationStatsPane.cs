@@ -6,24 +6,16 @@ namespace DatabaseGrinder.UI;
 /// <summary>
 /// Manages the top status bar showing PostgreSQL native replication statistics
 /// </summary>
-public class ReplicationStatsPane
+/// <remarks>
+/// Initializes a new instance of ReplicationStatsPane
+/// </remarks>
+/// <param name="consoleManager">Console manager for display operations</param>
+/// <param name="logger">Logger instance</param>
+public class ReplicationStatsPane(ConsoleManager consoleManager, ILogger<ReplicationStatsPane> logger)
 {
-	private readonly ConsoleManager _consoleManager;
-	private readonly ILogger<ReplicationStatsPane> _logger;
 	private readonly Lock _lockObject = new();
 	private PostgreSQLReplicationSummary? _primaryStats;
 	private readonly Dictionary<string, PostgreSQLReplicationSummary> _replicaStats = new();
-
-	/// <summary>
-	/// Initializes a new instance of ReplicationStatsPane
-	/// </summary>
-	/// <param name="consoleManager">Console manager for display operations</param>
-	/// <param name="logger">Logger instance</param>
-	public ReplicationStatsPane(ConsoleManager consoleManager, ILogger<ReplicationStatsPane> logger)
-	{
-		_consoleManager = consoleManager;
-		_logger = logger;
-	}
 
 	/// <summary>
 	/// Update PostgreSQL replication statistics for primary server
@@ -57,7 +49,7 @@ public class ReplicationStatsPane
 	{
 		lock (_lockObject)
 		{
-			var paneWidth = _consoleManager.Width;
+			var paneWidth = consoleManager.Width;
 			var paneY = 1; // Right below the branding area
 
 			// Ensure we have valid dimensions
@@ -66,11 +58,11 @@ public class ReplicationStatsPane
 
 			// Clear the replication stats pane area
 			var clearLine = new string(' ', paneWidth);
-			_consoleManager.WriteAt(0, paneY, clearLine);
+			consoleManager.WriteAt(0, paneY, clearLine);
 
 			// Create the status display
 			var statusText = BuildStatusText();
-			
+
 			// Truncate if necessary and display
 			if (statusText.Length > paneWidth)
 			{
@@ -79,14 +71,14 @@ public class ReplicationStatsPane
 
 			// Display with appropriate colors
 			var color = GetStatusColor();
-			_consoleManager.WriteAt(0, paneY, statusText, color, ConsoleColor.Black);
+			consoleManager.WriteAt(0, paneY, statusText, color, ConsoleColor.Black);
 
 			// Add separator line if there's space
-			if (_consoleManager.Height > 3)
+			if (consoleManager.Height > 3)
 			{
 				var separatorY = paneY + 1;
-				var separator = new string(_consoleManager.HorizontalLineChar, paneWidth);
-				_consoleManager.WriteAt(0, separatorY, separator, ConsoleColor.DarkGray);
+				var separator = new string(consoleManager.HorizontalLineChar, paneWidth);
+				consoleManager.WriteAt(0, separatorY, separator, ConsoleColor.DarkGray);
 			}
 		}
 	}
@@ -103,44 +95,68 @@ public class ReplicationStatsPane
 
 		var parts = new List<string>();
 
-		// Primary server info
-		if (_primaryStats.IsStandby)
+		// Check if we have limited access (LSN is "N/A" indicates permission issues)
+		if (_primaryStats.CurrentLsn == "N/A")
 		{
-			parts.Add("STANDBY");
-			if (_primaryStats.WalReceiverStats != null)
+			parts.Add("Limited Access");
+			parts.Add("Need pg_monitor role for full stats");
+
+			// Show basic connection info we can still get
+			parts.Add($"Connected: {(!string.IsNullOrEmpty(_primaryStats.CurrentLsn) ? "Yes" : "No")}");
+
+			// Show last updated
+			var ago = DateTime.UtcNow - _primaryStats.LastUpdated;
+			if (ago.TotalSeconds < 60)
 			{
-				parts.Add($"Primary: {_primaryStats.WalReceiverStats.SenderHost}:{_primaryStats.WalReceiverStats.SenderPort}");
-				parts.Add($"Status: {_primaryStats.WalReceiverStats.Status}");
+				parts.Add($"Updated: {ago.TotalSeconds:F0}s ago");
+			}
+			else
+			{
+				parts.Add($"Updated: {ago.TotalMinutes:F0}m ago");
 			}
 		}
 		else
 		{
-			parts.Add("PRIMARY");
-			parts.Add($"LSN: {_primaryStats.CurrentLsn}");
-			parts.Add($"Replicas: {_primaryStats.ActiveReplicas}/{_primaryStats.ReplicationStats.Count}");
-			
-			if (_primaryStats.MaxReplayLag > 0)
+			// Full access - show complete stats
+			// Primary server info
+			if (_primaryStats.IsStandby)
 			{
-				var lagMs = _primaryStats.MaxReplayLag / 1000; // Convert microseconds to milliseconds
-				parts.Add($"Max Lag: {lagMs}ms");
+				parts.Add("STANDBY");
+				if (_primaryStats.WalReceiverStats != null)
+				{
+					parts.Add($"Primary: {_primaryStats.WalReceiverStats.SenderHost}:{_primaryStats.WalReceiverStats.SenderPort}");
+					parts.Add($"Status: {_primaryStats.WalReceiverStats.Status}");
+				}
 			}
-		}
+			else
+			{
+				parts.Add("PRIMARY");
+				parts.Add($"LSN: {_primaryStats.CurrentLsn}");
+				parts.Add($"Replicas: {_primaryStats.ActiveReplicas}/{_primaryStats.ReplicationStats.Count}");
 
-		// Replication slots
-		if (_primaryStats.TotalSlots > 0)
-		{
-			parts.Add($"Slots: {_primaryStats.ActiveSlots}/{_primaryStats.TotalSlots}");
-		}
+				if (_primaryStats.MaxReplayLag > 0)
+				{
+					var lagMs = _primaryStats.MaxReplayLag / 1000; // Convert microseconds to milliseconds
+					parts.Add($"Max Lag: {lagMs}ms");
+				}
+			}
 
-		// Last updated
-		var ago = DateTime.UtcNow - _primaryStats.LastUpdated;
-		if (ago.TotalSeconds < 60)
-		{
-			parts.Add($"Updated: {ago.TotalSeconds:F0}s ago");
-		}
-		else
-		{
-			parts.Add($"Updated: {ago.TotalMinutes:F0}m ago");
+			// Replication slots
+			if (_primaryStats.TotalSlots > 0)
+			{
+				parts.Add($"Slots: {_primaryStats.ActiveSlots}/{_primaryStats.TotalSlots}");
+			}
+
+			// Last updated
+			var ago = DateTime.UtcNow - _primaryStats.LastUpdated;
+			if (ago.TotalSeconds < 60)
+			{
+				parts.Add($"Updated: {ago.TotalSeconds:F0}s ago");
+			}
+			else
+			{
+				parts.Add($"Updated: {ago.TotalMinutes:F0}m ago");
+			}
 		}
 
 		return "PostgreSQL: " + string.Join(" | ", parts);
@@ -154,6 +170,12 @@ public class ReplicationStatsPane
 		if (_primaryStats == null)
 		{
 			return ConsoleColor.Yellow;
+		}
+
+		// Check for limited access
+		if (_primaryStats.CurrentLsn == "N/A")
+		{
+			return ConsoleColor.DarkYellow; // Orange-ish to indicate limited access
 		}
 
 		// Check for any issues
@@ -222,7 +244,7 @@ public class ReplicationStatsPane
 			{
 				details.Add($"Active Replicas: {_primaryStats.ActiveReplicas}");
 				details.Add($"Max Replay Lag: {_primaryStats.MaxReplayLag / 1000}ms");
-				
+
 				foreach (var replica in _primaryStats.ReplicationStats)
 				{
 					details.Add($"  - {replica.ApplicationName} ({replica.ClientAddr}): {replica.State}, Lag: {replica.ReplayLag / 1000}ms");

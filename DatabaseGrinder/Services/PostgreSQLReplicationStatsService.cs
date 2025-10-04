@@ -218,10 +218,20 @@ public class PostgreSQLReplicationStatsService
 	/// </summary>
 	private async Task<string> GetCurrentLsnAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
 	{
-		const string query = "SELECT pg_current_wal_lsn();";
-		using var command = new NpgsqlCommand(query, connection);
-		var result = await command.ExecuteScalarAsync(cancellationToken);
-		return result?.ToString() ?? "0/0";
+		try
+		{
+			// Try to get current WAL LSN - this requires superuser or pg_monitor role
+			const string query = "SELECT pg_current_wal_lsn();";
+			using var command = new NpgsqlCommand(query, connection);
+			var result = await command.ExecuteScalarAsync(cancellationToken);
+			return result?.ToString() ?? "0/0";
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to get current LSN - may need superuser or pg_monitor role");
+			// Return a default value if we can't access LSN
+			return "N/A";
+		}
 	}
 
 	/// <summary>
@@ -229,10 +239,18 @@ public class PostgreSQLReplicationStatsService
 	/// </summary>
 	private async Task<bool> IsStandbyServerAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
 	{
-		const string query = "SELECT pg_is_in_recovery();";
-		using var command = new NpgsqlCommand(query, connection);
-		var result = await command.ExecuteScalarAsync(cancellationToken);
-		return result is bool isRecovery && isRecovery;
+		try
+		{
+			const string query = "SELECT pg_is_in_recovery();";
+			using var command = new NpgsqlCommand(query, connection);
+			var result = await command.ExecuteScalarAsync(cancellationToken);
+			return result is bool isRecovery && isRecovery;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to check if server is in recovery");
+			return false; // Assume primary if we can't determine
+		}
 	}
 
 	/// <summary>
@@ -240,50 +258,58 @@ public class PostgreSQLReplicationStatsService
 	/// </summary>
 	private async Task<List<PostgreSQLReplicationStats>> GetReplicationStatsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
 	{
-		const string query = @"
-			SELECT 
-				application_name,
-				client_addr::text,
-				state,
-				sent_lsn::text,
-				write_lsn::text,
-				flush_lsn::text,
-				replay_lsn::text,
-				COALESCE(EXTRACT(microseconds FROM write_lag), 0)::bigint as write_lag,
-				COALESCE(EXTRACT(microseconds FROM flush_lag), 0)::bigint as flush_lag,
-				COALESCE(EXTRACT(microseconds FROM replay_lag), 0)::bigint as replay_lag,
-				backend_start,
-				sync_state,
-				sync_priority
-			FROM pg_stat_replication 
-			ORDER BY application_name;";
-
-		var stats = new List<PostgreSQLReplicationStats>();
-
-		using var command = new NpgsqlCommand(query, connection);
-		using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-		while (await reader.ReadAsync(cancellationToken))
+		try
 		{
-			stats.Add(new PostgreSQLReplicationStats
-			{
-				ApplicationName = reader.GetString(0),
-				ClientAddr = reader.IsDBNull(1) ? "" : reader.GetString(1),
-				State = reader.GetString(2),
-				SentLsn = reader.GetString(3),
-				WriteLsn = reader.GetString(4),
-				FlushLsn = reader.GetString(5),
-				ReplayLsn = reader.GetString(6),
-				WriteLag = reader.GetInt64(7),
-				FlushLag = reader.GetInt64(8),
-				ReplayLag = reader.GetInt64(9),
-				BackendStart = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
-				SyncState = reader.GetString(11),
-				SyncPriority = reader.GetInt32(12)
-			});
-		}
+			const string query = @"
+				SELECT 
+					application_name,
+					client_addr::text,
+					state,
+					sent_lsn::text,
+					write_lsn::text,
+					flush_lsn::text,
+					replay_lsn::text,
+					COALESCE(EXTRACT(microseconds FROM write_lag), 0)::bigint as write_lag,
+					COALESCE(EXTRACT(microseconds FROM flush_lag), 0)::bigint as flush_lag,
+					COALESCE(EXTRACT(microseconds FROM replay_lag), 0)::bigint as replay_lag,
+					backend_start,
+					sync_state,
+					sync_priority
+				FROM pg_stat_replication 
+				ORDER BY application_name;";
 
-		return stats;
+			var stats = new List<PostgreSQLReplicationStats>();
+
+			using var command = new NpgsqlCommand(query, connection);
+			using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+			while (await reader.ReadAsync(cancellationToken))
+			{
+				stats.Add(new PostgreSQLReplicationStats
+				{
+					ApplicationName = reader.GetString(0),
+					ClientAddr = reader.IsDBNull(1) ? "" : reader.GetString(1),
+					State = reader.GetString(2),
+					SentLsn = reader.GetString(3),
+					WriteLsn = reader.GetString(4),
+					FlushLsn = reader.GetString(5),
+					ReplayLsn = reader.GetString(6),
+					WriteLag = reader.GetInt64(7),
+					FlushLag = reader.GetInt64(8),
+					ReplayLag = reader.GetInt64(9),
+					BackendStart = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+					SyncState = reader.GetString(11),
+					SyncPriority = reader.GetInt32(12)
+				});
+			}
+
+			return stats;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to query pg_stat_replication - may need superuser or pg_monitor role, or no replication configured");
+			return []; // Return empty list if we can't access replication stats
+		}
 	}
 
 	/// <summary>
@@ -291,51 +317,59 @@ public class PostgreSQLReplicationStatsService
 	/// </summary>
 	private async Task<PostgreSQLWalReceiverStats?> GetWalReceiverStatsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
 	{
-		const string query = @"
-			SELECT 
-				pid,
-				status,
-				receive_start_lsn::text,
-				receive_start_tli::text,
-				written_lsn::text,
-				flushed_lsn::text,
-				received_tli::text,
-				last_msg_send_time,
-				last_msg_receipt_time,
-				latest_end_lsn::text,
-				latest_end_time,
-				slot_name,
-				sender_host,
-				sender_port,
-				conninfo
-			FROM pg_stat_wal_receiver;";
-
-		using var command = new NpgsqlCommand(query, connection);
-		using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-		if (await reader.ReadAsync(cancellationToken))
+		try
 		{
-			return new PostgreSQLWalReceiverStats
-			{
-				Pid = reader.GetInt32(0),
-				Status = reader.GetString(1),
-				ReceiveStartLsn = reader.GetString(2),
-				ReceiveStartTli = reader.GetString(3),
-				WrittenLsn = reader.GetString(4),
-				FlushedLsn = reader.GetString(5),
-				ReceivedTli = reader.GetString(6),
-				LastMsgSendTime = reader.IsDBNull(7) ? null : reader.GetDateTime(7),
-				LastMsgReceiptTime = reader.IsDBNull(8) ? null : reader.GetDateTime(8),
-				LatestEndLsn = reader.GetString(9),
-				LatestEndTime = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
-				SlotName = reader.IsDBNull(11) ? "" : reader.GetString(11),
-				SenderHost = reader.GetString(12),
-				SenderPort = reader.GetInt32(13),
-				ConnInfo = reader.GetString(14)
-			};
-		}
+			const string query = @"
+				SELECT 
+					pid,
+					status,
+					receive_start_lsn::text,
+					receive_start_tli::text,
+					written_lsn::text,
+					flushed_lsn::text,
+					received_tli::text,
+					last_msg_send_time,
+					last_msg_receipt_time,
+					latest_end_lsn::text,
+					latest_end_time,
+					slot_name,
+					sender_host,
+					sender_port,
+					conninfo
+				FROM pg_stat_wal_receiver;";
 
-		return null;
+			using var command = new NpgsqlCommand(query, connection);
+			using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+			if (await reader.ReadAsync(cancellationToken))
+			{
+				return new PostgreSQLWalReceiverStats
+				{
+					Pid = reader.GetInt32(0),
+					Status = reader.GetString(1),
+					ReceiveStartLsn = reader.GetString(2),
+					ReceiveStartTli = reader.GetString(3),
+					WrittenLsn = reader.GetString(4),
+					FlushedLsn = reader.GetString(5),
+					ReceivedTli = reader.GetString(6),
+					LastMsgSendTime = reader.IsDBNull(7) ? null : reader.GetDateTime(7),
+					LastMsgReceiptTime = reader.IsDBNull(8) ? null : reader.GetDateTime(8),
+					LatestEndLsn = reader.GetString(9),
+					LatestEndTime = reader.IsDBNull(10) ? null : reader.GetDateTime(10),
+					SlotName = reader.IsDBNull(11) ? "" : reader.GetString(11),
+					SenderHost = reader.GetString(12),
+					SenderPort = reader.GetInt32(13),
+					ConnInfo = reader.GetString(14)
+				};
+			}
+
+			return null;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to query pg_stat_wal_receiver - may need superuser or pg_monitor role, or not a standby server");
+			return null;
+		}
 	}
 
 	/// <summary>
@@ -343,52 +377,60 @@ public class PostgreSQLReplicationStatsService
 	/// </summary>
 	private async Task<List<PostgreSQLReplicationSlot>> GetReplicationSlotsAsync(NpgsqlConnection connection, CancellationToken cancellationToken)
 	{
-		const string query = @"
-			SELECT 
-				slot_name,
-				plugin,
-				slot_type,
-				datname as database,
-				temporary,
-				active,
-				active_pid,
-				xmin::text,
-				catalog_xmin::text,
-				restart_lsn::text,
-				confirmed_flush_lsn::text,
-				wal_status,
-				safe_wal_size,
-				two_phase
-			FROM pg_replication_slots
-			LEFT JOIN pg_database ON pg_replication_slots.database = pg_database.oid
-			ORDER BY slot_name;";
-
-		var slots = new List<PostgreSQLReplicationSlot>();
-
-		using var command = new NpgsqlCommand(query, connection);
-		using var reader = await command.ExecuteReaderAsync(cancellationToken);
-
-		while (await reader.ReadAsync(cancellationToken))
+		try
 		{
-			slots.Add(new PostgreSQLReplicationSlot
-			{
-				SlotName = reader.GetString(0),
-				Plugin = reader.IsDBNull(1) ? "" : reader.GetString(1),
-				SlotType = reader.GetString(2),
-				Database = reader.IsDBNull(3) ? "" : reader.GetString(3),
-				Temporary = reader.GetBoolean(4),
-				Active = reader.GetBoolean(5),
-				ActivePid = reader.IsDBNull(6) ? null : reader.GetInt32(6),
-				XMin = reader.IsDBNull(7) ? null : reader.GetString(7),
-				CatalogXMin = reader.IsDBNull(8) ? null : reader.GetString(8),
-				RestartLsn = reader.IsDBNull(9) ? null : reader.GetString(9),
-				ConfirmedFlushLsn = reader.IsDBNull(10) ? null : reader.GetString(10),
-				WalStatus = reader.IsDBNull(11) ? null : reader.GetString(11),
-				SafeWalSize = reader.IsDBNull(12) ? null : reader.GetInt64(12),
-				TwoPhase = reader.IsDBNull(13) ? null : reader.GetBoolean(13)
-			});
-		}
+			const string query = @"
+				SELECT 
+					slot_name,
+					plugin,
+					slot_type,
+					datname as database,
+					temporary,
+					active,
+					active_pid,
+					xmin::text,
+					catalog_xmin::text,
+					restart_lsn::text,
+					confirmed_flush_lsn::text,
+					wal_status,
+					safe_wal_size,
+					two_phase
+				FROM pg_replication_slots
+				LEFT JOIN pg_database ON pg_replication_slots.database = pg_database.oid
+				ORDER BY slot_name;";
 
-		return slots;
+			var slots = new List<PostgreSQLReplicationSlot>();
+
+			using var command = new NpgsqlCommand(query, connection);
+			using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+			while (await reader.ReadAsync(cancellationToken))
+			{
+				slots.Add(new PostgreSQLReplicationSlot
+				{
+					SlotName = reader.GetString(0),
+					Plugin = reader.IsDBNull(1) ? "" : reader.GetString(1),
+					SlotType = reader.GetString(2),
+					Database = reader.IsDBNull(3) ? "" : reader.GetString(3),
+					Temporary = reader.GetBoolean(4),
+					Active = reader.GetBoolean(5),
+					ActivePid = reader.IsDBNull(6) ? null : reader.GetInt32(6),
+					XMin = reader.IsDBNull(7) ? null : reader.GetString(7),
+					CatalogXMin = reader.IsDBNull(8) ? null : reader.GetString(8),
+					RestartLsn = reader.IsDBNull(9) ? null : reader.GetString(9),
+					ConfirmedFlushLsn = reader.IsDBNull(10) ? null : reader.GetString(10),
+					WalStatus = reader.IsDBNull(11) ? null : reader.GetString(11),
+					SafeWalSize = reader.IsDBNull(12) ? null : reader.GetInt64(12),
+					TwoPhase = reader.IsDBNull(13) ? null : reader.GetBoolean(13)
+				});
+			}
+
+			return slots;
+		}
+		catch (Exception ex)
+		{
+			_logger.LogWarning(ex, "Failed to query pg_replication_slots - may need superuser or pg_monitor role");
+			return []; // Return empty list if we can't access replication slots
+		}
 	}
 }

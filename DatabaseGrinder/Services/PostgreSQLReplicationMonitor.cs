@@ -10,35 +10,23 @@ namespace DatabaseGrinder.Services;
 /// <summary>
 /// Background service that periodically queries PostgreSQL native replication statistics
 /// </summary>
-public class PostgreSQLReplicationMonitor : BackgroundService
+// ReSharper disable once InconsistentNaming
+public class PostgreSQLReplicationMonitor(
+	IServiceProvider serviceProvider,
+	ILogger<PostgreSQLReplicationMonitor> logger,
+	IOptions<DatabaseGrinderSettings> settings,
+	ReplicationStatsPane replicationStatsPane,
+	LeftPane leftPane) : BackgroundService
 {
-	private readonly IServiceProvider _serviceProvider;
-	private readonly ILogger<PostgreSQLReplicationMonitor> _logger;
-	private readonly DatabaseGrinderSettings _settings;
-	private readonly ReplicationStatsPane _replicationStatsPane;
-	private readonly LeftPane _leftPane;
-
-	public PostgreSQLReplicationMonitor(
-		IServiceProvider serviceProvider,
-		ILogger<PostgreSQLReplicationMonitor> logger,
-		IOptions<DatabaseGrinderSettings> settings,
-		ReplicationStatsPane replicationStatsPane,
-		LeftPane leftPane)
-	{
-		_serviceProvider = serviceProvider;
-		_logger = logger;
-		_settings = settings.Value;
-		_replicationStatsPane = replicationStatsPane;
-		_leftPane = leftPane;
-	}
+	private readonly DatabaseGrinderSettings _settings = settings.Value;
 
 	/// <summary>
 	/// Main execution loop for PostgreSQL replication monitoring
 	/// </summary>
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
-		_logger.LogInformation("PostgreSQL Replication Monitor started - querying native replication statistics");
-		_leftPane.AddLogEntry("PostgreSQL replication monitor started");
+		logger.LogInformation("PostgreSQL Replication Monitor started - querying native replication statistics");
+		leftPane.AddLogEntry("PostgreSQL replication monitor started");
 
 		// Wait a bit to let other services start up
 		await Task.Delay(2000, stoppingToken);
@@ -53,12 +41,32 @@ public class PostgreSQLReplicationMonitor : BackgroundService
 
 			try
 			{
-				using var scope = _serviceProvider.CreateScope();
+				using var scope = serviceProvider.CreateScope();
 				var statsService = scope.ServiceProvider.GetRequiredService<PostgreSQLReplicationStatsService>();
 
 				// Query primary database statistics
-				var primaryStats = await statsService.QueryPrimaryReplicationStatsAsync(stoppingToken);
-				_replicationStatsPane.UpdatePrimaryStats(primaryStats);
+				try
+				{
+					var primaryStats = await statsService.QueryPrimaryReplicationStatsAsync(stoppingToken);
+					replicationStatsPane.UpdatePrimaryStats(primaryStats);
+
+					logger.LogDebug("Successfully updated PostgreSQL primary stats: LSN={CurrentLsn}, IsStandby={IsStandby}",
+						primaryStats.CurrentLsn, primaryStats.IsStandby);
+				}
+				catch (Exception primaryEx)
+				{
+					logger.LogError(primaryEx, "Failed to query PostgreSQL replication stats from primary database");
+					leftPane.AddLogEntry($"PostgreSQL primary stats error: {primaryEx.Message}");
+
+					// Create a fallback stats object to show we tried but failed
+					var fallbackStats = new PostgreSQLReplicationSummary
+					{
+						CurrentLsn = "Error",
+						IsStandby = false,
+						LastUpdated = DateTime.UtcNow
+					};
+					replicationStatsPane.UpdatePrimaryStats(fallbackStats);
+				}
 
 				// Query replica statistics (optional - for more comprehensive monitoring)
 				foreach (var replica in _settings.ReplicaConnections)
@@ -66,11 +74,14 @@ public class PostgreSQLReplicationMonitor : BackgroundService
 					try
 					{
 						var replicaStats = await statsService.QueryReplicaReplicationStatsAsync(replica.Name, replica.ConnectionString, stoppingToken);
-						_replicationStatsPane.UpdateReplicaStats(replica.Name, replicaStats);
+						replicationStatsPane.UpdateReplicaStats(replica.Name, replicaStats);
+
+						logger.LogDebug("Successfully updated PostgreSQL replica stats for {ReplicaName}: LSN={CurrentLsn}",
+							replica.Name, replicaStats.CurrentLsn);
 					}
-					catch (Exception ex)
+					catch (Exception replicaEx)
 					{
-						_logger.LogWarning(ex, "Failed to query PostgreSQL replication stats from replica {ReplicaName}", replica.Name);
+						logger.LogWarning(replicaEx, "Failed to query PostgreSQL replication stats from replica {ReplicaName}", replica.Name);
 						// Continue with other replicas - don't fail the entire monitoring loop for one replica
 					}
 				}
@@ -78,11 +89,11 @@ public class PostgreSQLReplicationMonitor : BackgroundService
 				// Reset error count on success
 				if (consecutiveErrors > 0)
 				{
-					_leftPane.AddLogEntry("PostgreSQL replication stats monitoring restored");
+					leftPane.AddLogEntry("PostgreSQL replication stats monitoring restored");
 					consecutiveErrors = 0;
 				}
 
-				_logger.LogDebug("PostgreSQL replication statistics updated successfully");
+				logger.LogDebug("PostgreSQL replication statistics updated successfully");
 
 				// Wait for next check
 				var elapsed = DateTime.Now - startTime;
@@ -108,12 +119,17 @@ public class PostgreSQLReplicationMonitor : BackgroundService
 			catch (Exception ex)
 			{
 				consecutiveErrors++;
-				_logger.LogError(ex, "Failed to query PostgreSQL replication statistics (attempt {ErrorCount})", consecutiveErrors);
+				logger.LogError(ex, "Unexpected error in PostgreSQL replication monitoring (attempt {ErrorCount})", consecutiveErrors);
 
 				// Only log to UI on first error or every 10th consecutive error to avoid spam
-				if (consecutiveErrors == 1 || consecutiveErrors % 10 == 0)
+				if (consecutiveErrors == 1)
 				{
-					_leftPane.AddLogEntry($"PostgreSQL replication stats error (attempt {consecutiveErrors}): {ex.Message}");
+					leftPane.AddLogEntry($"PostgreSQL replication monitor error: {ex.Message}");
+					leftPane.AddLogEntry("Note: PostgreSQL stats require pg_monitor role or superuser privileges");
+				}
+				else if (consecutiveErrors % 10 == 0)
+				{
+					leftPane.AddLogEntry($"PostgreSQL replication stats error (attempt {consecutiveErrors}): {ex.Message}");
 				}
 
 				// Progressive backoff on consecutive errors
@@ -130,7 +146,7 @@ public class PostgreSQLReplicationMonitor : BackgroundService
 			}
 		}
 
-		_logger.LogInformation("PostgreSQL Replication Monitor stopped");
-		_leftPane.AddLogEntry("PostgreSQL replication monitor stopped");
+		logger.LogInformation("PostgreSQL Replication Monitor stopped");
+		leftPane.AddLogEntry("PostgreSQL replication monitor stopped");
 	}
 }

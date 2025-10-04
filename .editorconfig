@@ -17,7 +17,7 @@ insert_final_newline = false
 
 #### VSpell Configuration ####
 vsspell_dictionary_languages = en-US
-vsspell_additional_dictionaries = ./DatabaseGrinder.dic
+vsspell_additional_dictionaries = DatabaseGrinder.dic
 vsspell_section_enabled = true
 
 #### .NET Code Actions ####
