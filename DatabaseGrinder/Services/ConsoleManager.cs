@@ -139,7 +139,7 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	/// <summary>
 	/// Y position where replication stats start (after branding area)
 	/// </summary>
-	public int ReplicationStatsStartY => BrandingHeight;
+	public static int ReplicationStatsStartY => BrandingHeight;
 
 	/// <summary>
 	/// Y position where content starts (after branding and replication stats areas)
@@ -523,37 +523,61 @@ public class ConsoleManager(int minWidth = 80, int minHeight = 25)
 	{
 		const string nkoChar = "ߝ"; // Unicode Nko letter FA
 
-		// Get version using Nerdbank GitVersioning format with git height
+		// Get version using Nerdbank GitVersioning - first 3 parts only (Major.Minor.Patch)
 		string versionString;
 		
 		try
 		{
 			var assembly = System.Reflection.Assembly.GetEntryAssembly();
 			
-			// For Nerdbank GitVersioning, we want Major.Minor.GitHeight format
-			// The FileVersion typically contains: Major.Minor.Build.Revision where Revision is git height
-			var version = assembly?.GetName().Version;
-			if (version != null)
+			// Try to get FileVersion first - this contains the full version (e.g., 1.4.1.5821)
+			// We want to extract only the first 3 parts (e.g., 1.4.1)
+			try
 			{
-				// Nerdbank GitVersioning puts git height in the Revision field (4th component)
-				// Format as v1.4.12345 where 12345 is the git height
-				if (version.Revision > 0)
+				var location = assembly?.Location;
+				if (!string.IsNullOrEmpty(location))
 				{
-					versionString = $"v{version.Major}.{version.Minor}.{version.Revision}";
-				}
-				else if (version.Build > 0)
-				{
-					// Sometimes git height is in Build field
-					versionString = $"v{version.Major}.{version.Minor}.{version.Build}";
+					var fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(location);
+					if (!string.IsNullOrEmpty(fileVersionInfo.FileVersion))
+					{
+						// Parse FileVersion (e.g., "1.4.1.5821") and extract first 3 parts (1.4.1)
+						var parts = fileVersionInfo.FileVersion.Split('.');
+						if (parts.Length >= 3)
+						{
+							// Format as Major.Minor.Patch (first 3 parts only)
+							versionString = $"v{parts[0]}.{parts[1]}.{parts[2]}";
+						}
+						else
+						{
+							versionString = $"v{fileVersionInfo.FileVersion}";
+						}
+					}
+					else
+					{
+						throw new InvalidOperationException("FileVersion is empty");
+					}
 				}
 				else
 				{
-					versionString = $"v{version.Major}.{version.Minor}.0";
+					throw new InvalidOperationException("Assembly location is empty");
 				}
 			}
-			else
+			catch
 			{
-				versionString = "v1.4.0";
+				// Fallback: try to get AssemblyInformationalVersion 
+				var informationalVersionAttribute = assembly?.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+					.FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
+				
+				if (informationalVersionAttribute != null && !string.IsNullOrEmpty(informationalVersionAttribute.InformationalVersion))
+				{
+					// Parse "1.4.1+16bd36ca4e" format - take the version part before the '+'
+					var versionPart = informationalVersionAttribute.InformationalVersion.Split('+')[0];
+					versionString = $"v{versionPart}";
+				}
+				else
+				{
+					versionString = "v1.4.0";
+				}
 			}
 		}
 		catch
