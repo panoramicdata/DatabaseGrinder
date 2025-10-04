@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System.Text.RegularExpressions;
+using static DatabaseGrinder.Services.VersionService;
 
 namespace DatabaseGrinder;
 
@@ -60,69 +61,10 @@ internal partial class Program
 
 			// Get logger for startup messages
 			var logger = host.Services.GetRequiredService<ILogger<Program>>();
-
-			// Get version using Nerdbank GitVersioning - first 3 parts only (Major.Minor.Patch)
-			string versionString;
-
-			try
-			{
-				var assembly = System.Reflection.Assembly.GetEntryAssembly();
-
-				// Try to get FileVersion first - this contains the full version (e.g., 1.4.1.5821)
-				// We want to extract only the first 3 parts (e.g., 1.4.1)
-				try
-				{
-					var location = assembly?.Location;
-					if (!string.IsNullOrEmpty(location))
-					{
-						var fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(location);
-						if (!string.IsNullOrEmpty(fileVersionInfo.FileVersion))
-						{
-							// Parse FileVersion (e.g., "1.4.1.5821") and extract first 3 parts (1.4.1)
-							var parts = fileVersionInfo.FileVersion.Split('.');
-							if (parts.Length >= 3)
-							{
-								// Format as Major.Minor.Patch (first 3 parts only)
-								versionString = $"v{parts[0]}.{parts[1]}.{parts[2]}";
-							}
-							else
-							{
-								versionString = $"v{fileVersionInfo.FileVersion}";
-							}
-						}
-						else
-						{
-							throw new InvalidOperationException("FileVersion is empty");
-						}
-					}
-					else
-					{
-						throw new InvalidOperationException("Assembly location is empty");
-					}
-				}
-				catch
-				{
-					// Fallback: try to get AssemblyInformationalVersion 
-					var informationalVersionAttribute = assembly?.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-						.FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
-
-					if (informationalVersionAttribute != null && !string.IsNullOrEmpty(informationalVersionAttribute.InformationalVersion))
-					{
-						// Parse "1.4.1+16bd36ca4e" format - take the version part before the '+'
-						var versionPart = informationalVersionAttribute.InformationalVersion.Split('+')[0];
-						versionString = $"v{versionPart}";
-					}
-					else
-					{
-						versionString = "v1.4.0";
-					}
-				}
-			}
-			catch
-			{
-				versionString = "v1.4.0";
-			}
-
+			
+			// Get version using the centralized VersionService
+			var versionString = GetVersion(includePrefix: true);
+			
 			logger.LogInformation("DatabaseGrinder {Version} - Database Replication Monitor by Panoramic Data Limited", versionString);
 			logger.LogInformation("Initializing application...");
 
@@ -351,11 +293,18 @@ internal partial class Program
 		var minWidth = configuration.GetValue<int>("DatabaseGrinder:Settings:MinConsoleWidth", 80);
 		var minHeight = configuration.GetValue<int>("DatabaseGrinder:Settings:MinConsoleHeight", 25);
 
-		// Add application services
+		// Add console services
+		services.AddSingleton<DatabaseGrinder.UI.Console.TerminalCapabilities>();
+		services.AddSingleton<DatabaseGrinder.UI.Console.BrandingService>();
+		services.AddSingleton<DatabaseGrinder.UI.Console.ConsoleBuffer>();
 		services.AddSingleton<ConsoleManager>(provider => new ConsoleManager(minWidth, minHeight));
+
+		// Add UI services
 		services.AddSingleton<LeftPane>();
 		services.AddSingleton<RightPane>();
 		services.AddSingleton<ReplicationStatsPane>(); // Add PostgreSQL replication stats pane
+
+		// Add application services
 		services.AddScoped<DatabaseSetupService>();
 		services.AddScoped<DatabaseCleanupService>();
 		services.AddScoped<PostgreSQLReplicationStatsService>(); // Add PostgreSQL replication stats service
@@ -513,67 +462,8 @@ internal partial class Program
 			logger.LogInformation("Platform: {Platform}", consoleManager.GetPlatformInfo());
 			logger.LogInformation("Using schema '{SchemaName}' in database '{DatabaseName}'", schemaName, databaseName);
 
-			// Get version using Nerdbank GitVersioning - first 3 parts only (Major.Minor.Patch)
-			string versionString;
-
-			try
-			{
-				var assembly = System.Reflection.Assembly.GetEntryAssembly();
-
-				// Try to get FileVersion first - this contains the full version (e.g., 1.4.1.5821)
-				// We want to extract only the first 3 parts (e.g., 1.4.1)
-				try
-				{
-					var location = assembly?.Location;
-					if (!string.IsNullOrEmpty(location))
-					{
-						var fileVersionInfo = System.Diagnostics.FileVersionInfo.GetVersionInfo(location);
-						if (!string.IsNullOrEmpty(fileVersionInfo.FileVersion))
-						{
-							// Parse FileVersion (e.g., "1.4.1.5821") and extract first 3 parts (1.4.1)
-							var parts = fileVersionInfo.FileVersion.Split('.');
-							if (parts.Length >= 3)
-							{
-								// Format as Major.Minor.Patch (first 3 parts only)
-								versionString = $"v{parts[0]}.{parts[1]}.{parts[2]}";
-							}
-							else
-							{
-								versionString = $"v{fileVersionInfo.FileVersion}";
-							}
-						}
-						else
-						{
-							throw new InvalidOperationException("FileVersion is empty");
-						}
-					}
-					else
-					{
-						throw new InvalidOperationException("Assembly location is empty");
-					}
-				}
-				catch
-				{
-					// Fallback: try to get AssemblyInformationalVersion 
-					var informationalVersionAttribute = assembly?.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
-						.FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute;
-
-					if (informationalVersionAttribute != null && !string.IsNullOrEmpty(informationalVersionAttribute.InformationalVersion))
-					{
-						// Parse "1.4.1+16bd36ca4e" format - take the version part before the '+'
-						var versionPart = informationalVersionAttribute.InformationalVersion.Split('+')[0];
-						versionString = $"v{versionPart}";
-					}
-					else
-					{
-						versionString = "v1.4.0";
-					}
-				}
-			}
-			catch
-			{
-				versionString = "v1.4.0";
-			}
+			// Get version using the centralized VersionService
+			var versionString = GetVersion(includePrefix: true);
 
 			// Initialize UI with startup messages including schema information
 			leftPane.AddLogEntry($"DatabaseGrinder {versionString} started");
